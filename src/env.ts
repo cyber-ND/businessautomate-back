@@ -54,7 +54,31 @@ const schema = z.object({
   // Flip to FREE when volume makes the ~2.5x cost difference matter
   // ($0.199 vs $0.079 per audit).
   AI_GENERATION_TIER: z.enum(['FREE', 'PAID']).default('PAID'),
-});
+
+  // Where the frontend lives. Paystack redirects the customer back here after
+  // payment, and emailed report links point at it.
+  WEB_APP_URL: z.string().url().default('http://localhost:5173'),
+
+  // --- Payments (Paystack) ---
+  // Optional so the app still boots for local work without payment keys;
+  // required in production, enforced below. Silently running production with
+  // payments disabled would be worse than failing to start.
+  PAYSTACK_SECRET_KEY: z.string().optional(),
+
+  // Minor units: kobo for NGN, cents for USD. Stored this way so money never
+  // touches a float. 4900 = $49.00.
+  REPORT_CURRENCY: z.enum(['NGN', 'USD']).default('USD'),
+  REPORT_PRICE_MINOR: z.coerce.number().int().positive().default(4900),
+})
+  .superRefine((value, ctx) => {
+    if (value.NODE_ENV === 'production' && !value.PAYSTACK_SECRET_KEY) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['PAYSTACK_SECRET_KEY'],
+        message: 'required in production — the app must not serve a paywall it cannot charge for',
+      });
+    }
+  });
 
 const parsed = schema.safeParse(process.env);
 
