@@ -43,11 +43,32 @@ failing one request at a time.
 A Postgres instance is required before the first migration. Provision one on
 Railway and set `DATABASE_URL` to its connection string.
 
+## Judging the audit
+
+The audit is the product, so it is testable on its own — no database, no HTTP, no
+frontend. With `ANTHROPIC_API_KEY` set:
+
+```sh
+npm run audit                  # list fixtures
+npm run audit -- salon         # paid tier (Opus 5)
+npm run audit -- salon --free  # free tier (Sonnet 5)
+npm run audit -- salon --json  # raw audit JSON
+```
+
+Output labels every field `FREE` or `LOCKED`, matching the paywall split, so the
+question "is the free half tantalising, and is the locked half worth paying
+for?" can be answered by eye before any UI exists.
+
+Fixtures live in `src/scripts/fixtures.ts`. The `vague` fixture is deliberately
+thin: triage should want a follow-up question there, and if it does not, the
+triage prompt is too permissive.
+
 ## Scripts
 
 | Script                | Does                                           |
 | --------------------- | ---------------------------------------------- |
 | `npm run dev`         | Watch mode via tsx                             |
+| `npm run audit -- salon` | Generate one real audit from a fixture and print it |
 | `npm run build`       | `prisma generate` then `tsc`                   |
 | `npm start`           | Run the compiled server (production)           |
 | `npm run typecheck`   | Types only, no emit                            |

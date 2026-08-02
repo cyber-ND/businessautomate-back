@@ -24,6 +24,15 @@ const schema = z.object({
 
   // Railway provides this for its managed Postgres instance.
   DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
+
+  ANTHROPIC_API_KEY: z.string().min(1, 'ANTHROPIC_API_KEY is required'),
+
+  // Model per tier. Free audits are marketing and run on Sonnet; paid audits
+  // run on the best model available. Overridable so a model upgrade is a config
+  // change and not a deploy.
+  AI_MODEL_FREE: z.string().default('claude-sonnet-5'),
+  AI_MODEL_PAID: z.string().default('claude-opus-5'),
+  AI_MODEL_TRIAGE: z.string().default('claude-sonnet-5'),
 });
 
 const parsed = schema.safeParse(process.env);
