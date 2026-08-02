@@ -42,6 +42,18 @@ const schema = z.object({
   // code change.
   AI_EFFORT_FREE: z.enum(['low', 'medium', 'high', 'xhigh', 'max']).default('medium'),
   AI_EFFORT_PAID: z.enum(['low', 'medium', 'high', 'xhigh', 'max']).default('high'),
+
+  // Which tier's model writes the audit. The audit is generated ONCE and gating
+  // is display-only, so this single choice decides what both free and paying
+  // viewers are reading.
+  //
+  // Defaults to PAID: at low volume the difference is a few dollars a month, and
+  // a stronger free teaser converts better. Regenerating on payment was
+  // rejected — the customer would wait another 90 seconds having just paid.
+  //
+  // Flip to FREE when volume makes the ~2.5x cost difference matter
+  // ($0.199 vs $0.079 per audit).
+  AI_GENERATION_TIER: z.enum(['FREE', 'PAID']).default('PAID'),
 });
 
 const parsed = schema.safeParse(process.env);

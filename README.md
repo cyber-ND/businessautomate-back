@@ -116,6 +116,60 @@ but the doc's figure is roughly half the real one.
 | `npm run typecheck`   | Types only, no emit                            |
 | `npm run prisma:push` | Sync the schema to the database (no migration) |
 
+## API
+
+| Method | Path                       | Returns | Notes                                        |
+| ------ | -------------------------- | ------- | -------------------------------------------- |
+| `POST` | `/api/reports`             | 202     | Start an audit. Body is the intake.          |
+| `GET`  | `/api/reports/:id`         | 200     | Poll status; audit appears once COMPLETED.   |
+| `POST` | `/api/reports/:id/answers` | 200     | Answer the adaptive follow-up question.      |
+| `POST` | `/api/reports/:id/retry`   | 200     | Retry a FAILED generation.                   |
+| `GET`  | `/health`                  | 200     | Liveness. Touches nothing.                   |
+| `GET`  | `/ready`                   | 200/503 | Readiness. Confirms the database answers.    |
+
+### The report lifecycle
+
+```
+POST /api/reports  →  202 { id, status: PENDING }
+                          ↓   (background, no HTTP request is waiting)
+                      triage: is the intake rich enough?
+                          ↓                        ↓
+                   needs a question            good to go
+                          ↓                        ↓
+                  AWAITING_ANSWERS             PROCESSING
+                          ↓                        ↓  75-115s
+        POST /:id/answers  ──────────────→     COMPLETED  (or FAILED)
+```
+
+Creation returns **202, not 201**: the row exists but the audit does not.
+Nothing waits on the model inside a request — triage alone is 4-5 seconds and
+generation over a minute. The client polls `GET /api/reports/:id`.
+
+`POST /:id/answers` takes only the answer. The *question* is read from the
+report's stored `pendingQuestion`, so a client cannot pair an answer with a
+question of its own choosing and steer what reaches the prompt.
+
+Status codes worth knowing: **409** means the request was well-formed but the
+report is not in a state that accepts it (usually a double submit); **400**
+means the intake itself was malformed.
+
+### What a free viewer gets
+
+Gating is a pure function over the stored audit ([`gating.ts`](src/modules/reports/gating.ts)),
+never a second generation — free and paid viewers read the same document.
+
+| Field                                            | Free | Paid |
+| ------------------------------------------------ | :--: | :--: |
+| `businessSummary`, `totals`                       |  ✅   |  ✅   |
+| `problem`, `monthlyCostUsd`, `hoursLostPerWeek`   |  ✅   |  ✅   |
+| `monthlySavingsUsd`, `hoursSavedPerWeek`          |  ✅   |  ✅   |
+| `solutionToolCostUsd`, `toolCount` (the teaser)   |  ✅   |  —   |
+| `solution`, `tools`, `firstStep`                  |  ❌   |  ✅   |
+| `roadmap`                                         |  ❌   |  ✅   |
+
+`paid` is derived from `Report.paidAt`, which only a signature-verified Paystack
+webhook sets. It is never taken from anything the client supplies.
+
 ## Branching
 
 `main` is the deployable branch. `dev` is integration. Every feature or milestone
