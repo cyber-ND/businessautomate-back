@@ -1,3 +1,5 @@
+import './load-env.js';
+
 import { buildApp } from './app.js';
 import { env } from './env.js';
 
