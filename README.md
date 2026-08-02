@@ -30,18 +30,33 @@ Deployed on Railway. The frontend lives in a separate repo
 
 ```sh
 npm install
-cp .env.example .env          # then fill in the values
-npx prisma migrate dev        # needs a reachable Postgres
+cp .env.example .env    # then fill in ANTHROPIC_API_KEY
+npm run setup           # starts Postgres in Docker and applies migrations
 npm run dev
 ```
+
+Requires Docker running. `npm run setup` is idempotent — safe to re-run.
 
 `GET /health` returns `{"status":"ok"}` without touching anything.
 `GET /ready` additionally confirms the database answers, and returns 503 if it
 does not — so a deploy that cannot reach Postgres is visibly broken rather than
 failing one request at a time.
 
-A Postgres instance is required before the first migration. Provision one on
-Railway and set `DATABASE_URL` to its connection string.
+### Where the database lives
+
+| Environment | Database                          | `DATABASE_URL`                            |
+| ----------- | --------------------------------- | ----------------------------------------- |
+| Local       | Postgres 16 in Docker, port 5433  | in `.env`, points at `localhost:5433`      |
+| Production  | Railway managed Postgres          | injected by Railway, private network       |
+
+Railway's `DATABASE_PUBLIC_URL` is deliberately unused. Its TCP proxy has no
+hostname provisioned, so the value resolves to `@:/railway` with an empty host —
+and connecting to a Railway database from outside its network bills egress
+regardless. The deployed service uses the private `DATABASE_URL` Railway injects
+for it, which costs nothing and needs no configuration here.
+
+Port 5433 rather than 5432 so the container cannot collide with a Postgres
+already installed on the machine.
 
 ## Judging the audit
 

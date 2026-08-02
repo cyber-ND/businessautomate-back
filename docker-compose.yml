@@ -1,0 +1,34 @@
+# Local development database only. Production Postgres is Railway's managed
+# instance, which the deployed service reaches over its private network.
+#
+#   npm run db:up     start it
+#   npm run db:stop   stop it, keeping data
+#   npm run db:reset  destroy it and start clean
+#
+# Port 5433 on the host, not 5432, so this cannot collide with a Postgres
+# already installed on the machine.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: ba-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: businessautomate
+      POSTGRES_PASSWORD: localdev
+      POSTGRES_DB: businessautomate
+    ports:
+      - '5433:5432'
+    volumes:
+      - ba-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      # Lets `docker compose up --wait` block until the database actually
+      # accepts connections, instead of returning the moment the container
+      # starts and leaving the next command to fail on a refused connection.
+      test: ['CMD-SHELL', 'pg_isready -U businessautomate -d businessautomate']
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  ba-postgres-data:

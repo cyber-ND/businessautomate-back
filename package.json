@@ -15,7 +15,12 @@
     "prisma:generate": "prisma generate",
     "prisma:push": "prisma db push",
     "prisma:migrate": "prisma migrate dev",
-    "prisma:studio": "prisma studio"
+    "prisma:deploy": "prisma migrate deploy",
+    "prisma:studio": "prisma studio",
+    "db:up": "docker compose up -d --wait",
+    "db:stop": "docker compose stop",
+    "db:reset": "docker compose down -v && npm run db:up && npm run prisma:deploy",
+    "setup": "npm run db:up && npm run prisma:deploy"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.115.0",
