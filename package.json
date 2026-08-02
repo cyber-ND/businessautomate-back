@@ -9,6 +9,7 @@
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "audit": "tsx src/scripts/generate-audit.ts",
+    "payment:simulate": "tsx src/scripts/simulate-payment.ts",
     "build": "prisma generate && tsc -p tsconfig.json",
     "start": "node dist/server.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",

@@ -5,6 +5,7 @@ import Fastify, { type FastifyError } from 'fastify';
 
 import { webOrigins } from './env.js';
 import { logger } from './logger.js';
+import { registerBillingRoutes } from './modules/billing/routes.js';
 import { registerReportRoutes } from './modules/reports/routes.js';
 import { registerHealthRoutes } from './routes/health.js';
 
@@ -67,6 +68,7 @@ export async function buildApp() {
 
   await app.register(registerHealthRoutes);
   await app.register(registerReportRoutes, { prefix: '/api' });
+  await app.register(registerBillingRoutes, { prefix: '/api' });
 
   app.setNotFoundHandler((request, reply) => {
     reply.code(404).send({
