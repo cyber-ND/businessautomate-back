@@ -30,11 +30,18 @@ Deployed on Railway. The frontend lives in a separate repo
 
 ```sh
 npm install
-cp .env.example .env    # then fill in the values
+cp .env.example .env          # then fill in the values
+npx prisma migrate dev        # needs a reachable Postgres
 npm run dev
 ```
 
-`GET /health` should return `{"status":"ok"}`.
+`GET /health` returns `{"status":"ok"}` without touching anything.
+`GET /ready` additionally confirms the database answers, and returns 503 if it
+does not — so a deploy that cannot reach Postgres is visibly broken rather than
+failing one request at a time.
+
+A Postgres instance is required before the first migration. Provision one on
+Railway and set `DATABASE_URL` to its connection string.
 
 ## Scripts
 
