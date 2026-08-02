@@ -1,24 +1,26 @@
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
-import Fastify, { type FastifyError, type FastifyInstance } from 'fastify';
+import Fastify, { type FastifyError } from 'fastify';
 
-import { env, isProduction, webOrigins } from './env.js';
+import { webOrigins } from './env.js';
+import { logger } from './logger.js';
+import { registerReportRoutes } from './modules/reports/routes.js';
 import { registerHealthRoutes } from './routes/health.js';
 
 /**
  * Builds the app without listening, so tests can drive it via `app.inject()`
  * and `server.ts` stays a thin entry point.
+ *
+ * The return type is inferred rather than annotated as `FastifyInstance`:
+ * passing a concrete pino instance as `loggerInstance` specialises Fastify's
+ * logger generic, and the default `FastifyInstance` no longer matches it.
  */
-export async function buildApp(): Promise<FastifyInstance> {
+export async function buildApp() {
   const app = Fastify({
-    logger: {
-      level: env.LOG_LEVEL,
-      // Pretty logs locally; structured JSON in production where Railway
-      // collects them.
-      transport: isProduction ? undefined : { target: 'pino-pretty' },
-      redact: ['req.headers.authorization', 'req.headers.cookie', 'req.headers["x-paystack-signature"]'],
-    },
+    // Shared with background report generation, which runs outside any request
+    // and would otherwise log through a separate channel.
+    loggerInstance: logger,
     // Railway terminates TLS in front of us, so trust its forwarding headers —
     // otherwise every client looks like it shares one internal IP and per-IP
     // rate limiting becomes a global limit.
@@ -49,7 +51,22 @@ export async function buildApp(): Promise<FastifyInstance> {
     timeWindow: '1 minute',
   });
 
+  // Accept a bodyless POST without demanding a Content-Type. Fastify otherwise
+  // answers 415, which is what a plain "retry" button sends — a confusing
+  // media-type error for a request that carries no media at all. Anything with
+  // an actual body and an unrecognised type still gets 415.
+  app.addContentTypeParser('*', { parseAs: 'string' }, (_request, body, done) => {
+    if (typeof body === 'string' && body.length === 0) {
+      done(null, {});
+      return;
+    }
+    const error = new Error('Unsupported Media Type') as Error & { statusCode?: number };
+    error.statusCode = 415;
+    done(error, undefined);
+  });
+
   await app.register(registerHealthRoutes);
+  await app.register(registerReportRoutes, { prefix: '/api' });
 
   app.setNotFoundHandler((request, reply) => {
     reply.code(404).send({
