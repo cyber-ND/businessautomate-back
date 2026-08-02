@@ -17,25 +17,25 @@ import {
   type ReportTier,
 } from './provider.js';
 
-// On Opus 5 thinking is ON by default and max_tokens caps thinking AND response
-// text together, so a budget sized only for the visible audit truncates it
-// mid-JSON. That surfaces as stop_reason "max_tokens" with a null parsed_output,
-// which is why this is sized with room for the model to reason through the
-// savings maths as well as write the document.
-const AUDIT_MAX_TOKENS = 16_000;
+// Thinking is on by default on these models, and max_tokens caps thinking AND
+// response text TOGETHER. A budget sized for the visible audit alone truncates
+// mid-JSON: at 16k, Sonnet 5 on high effort spent so much of it reasoning that
+// the document was cut off around 7.5k characters in. Opus 5 fit in 16k, Sonnet
+// did not, so the ceiling is set by the hungriest model rather than the average.
+//
+// At this budget the SDK refuses non-streaming requests outright — it estimates
+// they could exceed ten minutes and an idle connection would drop first — so the
+// audit call streams and collects the final message.
+const AUDIT_MAX_TOKENS = 32_000;
 
 // Triage is one judgment call, not a document.
 const TRIAGE_MAX_TOKENS = 2_000;
 
-// Effort is the intelligence-versus-cost dial. The free tier gets `high` too,
-// deliberately: the free audit is the entire conversion engine, so
-// under-investing there is penny-wise. If free volume outgrows the AI budget,
-// dropping FREE to 'medium' is the first lever to pull and it is a one-word
-// change here.
-const EFFORT_BY_TIER: Record<ReportTier, 'low' | 'medium' | 'high'> = {
-  FREE: 'high',
-  PAID: 'high',
-};
+type Effort = typeof env.AI_EFFORT_PAID;
+
+function effortFor(tier: ReportTier): Effort {
+  return tier === 'PAID' ? env.AI_EFFORT_PAID : env.AI_EFFORT_FREE;
+}
 
 export class ClaudeProvider implements AiProvider {
   readonly name = 'claude';
@@ -106,18 +106,32 @@ export class ClaudeProvider implements AiProvider {
   ): Promise<AuditResult> {
     const model = this.modelFor(tier);
 
+    // Streaming, then collecting the final message, for two reasons.
+    //
+    // First, the SDK rejects a non-streaming request at this token budget: it
+    // estimates the call could outlast an idle HTTP connection.
+    //
+    // Second, this deliberately avoids messages.parse(). That helper decodes the
+    // JSON inside the SDK and throws on malformed output, which fires BEFORE we
+    // can read stop_reason — so a response truncated at the token ceiling
+    // surfaces as an opaque "Unterminated string in JSON at position 7508"
+    // instead of the truncation it actually is. Reading the raw message lets us
+    // classify the failure properly, which matters because TRUNCATED is worth
+    // retrying and REFUSED is not.
     let response;
     try {
-      response = await this.client.messages.parse({
-        model,
-        max_tokens: AUDIT_MAX_TOKENS,
-        output_config: {
-          effort: EFFORT_BY_TIER[tier],
-          format: zodOutputFormat(AuditSchema),
-        },
-        system: AUDIT_SYSTEM_PROMPT,
-        messages: [{ role: 'user', content: buildAuditUserPrompt(intake, followUps) }],
-      });
+      response = await this.client.messages
+        .stream({
+          model,
+          max_tokens: AUDIT_MAX_TOKENS,
+          output_config: {
+            effort: effortFor(tier),
+            format: zodOutputFormat(AuditSchema),
+          },
+          system: AUDIT_SYSTEM_PROMPT,
+          messages: [{ role: 'user', content: buildAuditUserPrompt(intake, followUps) }],
+        })
+        .finalMessage();
     } catch (error) {
       throw new AuditGenerationError(
         `Anthropic request failed: ${error instanceof Error ? error.message : 'unknown error'}`,
@@ -139,15 +153,46 @@ export class ClaudeProvider implements AiProvider {
 
     if (response.stop_reason === 'max_tokens') {
       throw new AuditGenerationError(
-        `Audit hit the ${AUDIT_MAX_TOKENS}-token ceiling before completing.`,
+        `Audit hit the ${AUDIT_MAX_TOKENS}-token ceiling before completing. ` +
+          `Thinking and output share this budget, so raising it or lowering effort both help.`,
         'TRUNCATED',
       );
     }
 
-    if (!response.parsed_output) {
+    // With thinking enabled the response opens with thinking blocks, so the
+    // audit is not necessarily content[0].
+    const text = response.content.find((block) => block.type === 'text')?.text;
+
+    if (!text) {
       throw new AuditGenerationError(
-        `Model returned no parseable audit (stop_reason=${response.stop_reason ?? 'unknown'}).`,
+        `Model returned no text block (stop_reason=${response.stop_reason ?? 'unknown'}).`,
         'EMPTY',
+      );
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(text);
+    } catch (error) {
+      throw new AuditGenerationError(
+        `Audit was not valid JSON despite a ${response.stop_reason} stop reason.`,
+        'EMPTY',
+        { cause: error },
+      );
+    }
+
+    // The API enforces the schema, so this should always pass. It is here
+    // because "should always" is not "does always", and a malformed audit
+    // reaching the report page is worse than a clean failure we can retry.
+    const validated = AuditSchema.safeParse(parsed);
+    if (!validated.success) {
+      throw new AuditGenerationError(
+        `Audit did not match the schema: ${validated.error.issues
+          .slice(0, 3)
+          .map((i) => `${i.path.join('.')}: ${i.message}`)
+          .join('; ')}`,
+        'EMPTY',
+        { cause: validated.error },
       );
     }
 
@@ -155,7 +200,7 @@ export class ClaudeProvider implements AiProvider {
       // Totals are recomputed rather than trusted: they are the headline figure
       // on the paywall screen, and a total that contradicts the visible line
       // items would be the most trust-destroying bug we could ship.
-      audit: recomputeTotals(response.parsed_output),
+      audit: recomputeTotals(validated.data),
       model,
       usage: {
         inputTokens: response.usage.input_tokens,

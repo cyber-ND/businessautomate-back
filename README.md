@@ -78,6 +78,33 @@ Fixtures live in `src/scripts/fixtures.ts`. The `vague` fixture is deliberately
 thin: triage should want a follow-up question there, and if it does not, the
 triage prompt is too permissive.
 
+### Measurements
+
+All on the `salon` fixture, 3,493 input tokens:
+
+| Tier | Model      | Effort | Wall clock | Output tokens | Cost    |
+| ---- | ---------- | ------ | ---------- | ------------- | ------- |
+| Paid | Opus 5     | high   | 113.7s     | 7,268         | $0.199  |
+| Free | Sonnet 5   | high   | 129.2s     | 11,634        | $0.123  |
+| Free | Sonnet 5   | medium | 76.8s      | 7,239         | $0.079  |
+
+Two findings worth keeping in mind:
+
+**Effort matters more than model.** Sonnet at `high` was *slower* than Opus at
+`high` and noticeably thinner — it spent the budget thinking rather than
+writing. Dropping free to `medium` cut 40% of the latency and 35% of the cost
+with no visible quality loss. Retune via `AI_EFFORT_FREE` / `AI_EFFORT_PAID`
+rather than by switching models.
+
+**Generation takes 75-115 seconds, not 20.** `DESIGN.md` budgets a ~20s
+"analyzing" screen; that is not reachable at this quality. The funnel has to
+either hold attention for a minute and a half, or hand the report over by email
+when it is ready.
+
+Cost consequence: `BUSINESS_MODEL.md` estimates ~$400/month for 10,000 free
+audits. At $0.079 each that is ~$790. Still trivial against a single $49 sale,
+but the doc's figure is roughly half the real one.
+
 ## Scripts
 
 | Script                | Does                                           |

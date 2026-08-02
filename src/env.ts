@@ -33,6 +33,15 @@ const schema = z.object({
   AI_MODEL_FREE: z.string().default('claude-sonnet-5'),
   AI_MODEL_PAID: z.string().default('claude-opus-5'),
   AI_MODEL_TRIAGE: z.string().default('claude-sonnet-5'),
+
+  // Effort is the strongest lever on cost, latency and depth — stronger than
+  // the model choice. Measured on the salon fixture, Sonnet at `high` was both
+  // SLOWER and thinner than Opus at `high`, because it burned the budget
+  // thinking rather than writing. Free therefore defaults lower.
+  // Exposed as config so these can be retuned against real audits without a
+  // code change.
+  AI_EFFORT_FREE: z.enum(['low', 'medium', 'high', 'xhigh', 'max']).default('medium'),
+  AI_EFFORT_PAID: z.enum(['low', 'medium', 'high', 'xhigh', 'max']).default('high'),
 });
 
 const parsed = schema.safeParse(process.env);
