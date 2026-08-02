@@ -21,6 +21,9 @@ const schema = z.object({
 
   // Comma-separated browser origins allowed to call this API.
   WEB_ORIGIN: z.string().default('http://localhost:5173'),
+
+  // Railway provides this for its managed Postgres instance.
+  DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
 });
 
 const parsed = schema.safeParse(process.env);
