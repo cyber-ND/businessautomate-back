@@ -28,7 +28,13 @@ export interface AiProvider {
   generateAudit(intake: Intake, followUps: FollowUp[], tier: ReportTier): Promise<AuditResult>;
 }
 
-export type AuditFailureCode = 'REFUSED' | 'TRUNCATED' | 'EMPTY' | 'UPSTREAM';
+export type AuditFailureCode =
+  | 'REFUSED'
+  | 'TRUNCATED'
+  | 'EMPTY'
+  | 'UPSTREAM'
+  /** Model answered in a different currency than requested. Retryable. */
+  | 'CURRENCY_MISMATCH';
 
 /** Thrown when the model produced no usable audit. Callers mark the report FAILED. */
 export class AuditGenerationError extends Error {

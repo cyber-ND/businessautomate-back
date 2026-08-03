@@ -15,10 +15,10 @@ import type { Audit, Opportunity } from '../ai-engine/audit-schema.js';
 export interface FreeOpportunity {
   rank: number;
   problem: string;
-  monthlyCostUsd: number;
+  monthlyCost: number;
   hoursLostPerWeek: number;
   difficulty: Opportunity['difficulty'];
-  monthlySavingsUsd: number;
+  monthlySavings: number;
   hoursSavedPerWeek: number;
   /**
    * The teaser: what the fix costs per month, with the tools themselves
@@ -26,13 +26,15 @@ export interface FreeOpportunity {
    * nothing, you just need to know which tool" is arguably the stronger one —
    * so the copy for that case is the frontend's job, not a reason to hide it.
    */
-  solutionToolCostUsd: number;
+  solutionToolCost: number;
   /** How many tools the fix needs, so the locked card can render that many rows. */
   toolCount: number;
 }
 
 export interface FreeAudit {
   locked: true;
+  /** Every amount below is in this currency. Free viewers need it to render. */
+  currency: Audit['currency'];
   businessSummary: string;
   opportunities: FreeOpportunity[];
   totals: Audit['totals'];
@@ -48,12 +50,12 @@ function toFreeOpportunity(opportunity: Opportunity): FreeOpportunity {
   return {
     rank: opportunity.rank,
     problem: opportunity.problem,
-    monthlyCostUsd: opportunity.monthlyCostUsd,
+    monthlyCost: opportunity.monthlyCost,
     hoursLostPerWeek: opportunity.hoursLostPerWeek,
     difficulty: opportunity.difficulty,
-    monthlySavingsUsd: opportunity.monthlySavingsUsd,
+    monthlySavings: opportunity.monthlySavings,
     hoursSavedPerWeek: opportunity.hoursSavedPerWeek,
-    solutionToolCostUsd: opportunity.tools.reduce((sum, tool) => sum + tool.monthlyCostUsd, 0),
+    solutionToolCost: opportunity.tools.reduce((sum, tool) => sum + tool.monthlyCost, 0),
     toolCount: opportunity.tools.length,
   };
 }
@@ -71,6 +73,7 @@ export function gateAudit(audit: Audit, paid: boolean): GatedAudit {
 
   return {
     locked: true,
+    currency: audit.currency,
     businessSummary: audit.businessSummary,
     opportunities: [...audit.opportunities]
       .sort((a, b) => a.rank - b.rank)

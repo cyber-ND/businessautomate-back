@@ -1,3 +1,4 @@
+import { currencyProfile, type CurrencyCode } from '../intake/currency.js';
 import {
   describeRevenue,
   describeTeamSize,
@@ -39,6 +40,11 @@ Every number you produce will be checked against the owner's intuition. One infl
 - Put the reasoning inside the problem or solution text so the number is auditable rather than asserted.
 - Savings must be net of the tool cost you are recommending.
 - Never claim a saving their stated revenue could not support.
+
+Every monetary figure — problem costs, savings, tool prices, and anything you
+mention in prose — must be in the single currency named in the request. Never
+mix currencies, never convert, and never quote a figure that would only make
+sense in a different currency than the one you were given.
 
 ## Ranking and sequencing
 
@@ -94,8 +100,24 @@ function formatFollowUps(followUps: FollowUp[]): string {
   return `\n\n## Follow-up questions we asked, and their answers\n\n${body}`;
 }
 
-export function buildAuditUserPrompt(intake: Intake, followUps: FollowUp[] = []): string {
+export function buildAuditUserPrompt(
+  intake: Intake,
+  followUps: FollowUp[] = [],
+  currency: CurrencyCode = 'USD',
+): string {
+  const profile = currencyProfile(currency);
+
   return `Write the automation audit for this business.
+
+## Currency — read this first
+
+Every amount in this audit is in **${profile.name} (${currency}, ${profile.symbol})**. Set the \`currency\` field to "${currency}".
+
+${profile.scaleHint}
+
+Sanity-check each figure before you write it: would this number make sense to someone who earns and spends in ${profile.name}? A cost that looks right in another currency is wrong here by a factor of hundreds or thousands.
+
+Note the revenue range below is given as a USD-equivalent band, because that band is the same for every market. Use it to judge the scale of the business, then write every figure in ${profile.name}. Do not echo the USD band back.
 
 ## What they told us
 
