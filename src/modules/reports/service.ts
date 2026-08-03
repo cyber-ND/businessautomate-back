@@ -7,6 +7,7 @@ import { logger } from '../../logger.js';
 import { AuditSchema, type Audit } from '../ai-engine/audit-schema.js';
 import { getAiProvider } from '../ai-engine/index.js';
 import { AuditGenerationError } from '../ai-engine/provider.js';
+import { sendInBackground, sendReportReady } from '../email/service.js';
 import { FollowUpSchema, IntakeSchema, MAX_FOLLOW_UPS, type Intake } from '../intake/schema.js';
 import { gateAudit, type GatedAudit } from './gating.js';
 
@@ -247,6 +248,12 @@ async function generate(
       },
       'audit generated',
     );
+
+    // The visitor has been staring at an analysing screen for over a minute and
+    // may well have closed the tab, so the report has to be able to reach them
+    // without them waiting. Deliberately not awaited: a Resend outage must not
+    // turn a successfully generated audit into a failed one.
+    sendInBackground(() => sendReportReady(reportId), { reportId, email: 'ready' });
   } catch (error) {
     const code = error instanceof AuditGenerationError ? error.code : 'UNKNOWN';
     logger.error({ err: error, reportId, code }, 'audit generation failed');

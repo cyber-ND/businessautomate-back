@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { prisma } from '../../db.js';
 import { env } from '../../env.js';
 import { logger } from '../../logger.js';
+import { sendInBackground, sendReportUnlocked } from '../email/service.js';
 import { initializeTransaction } from './paystack.js';
 
 export class CheckoutStateError extends Error {
@@ -177,6 +178,14 @@ export async function handleWebhookEvent(payload: unknown): Promise<WebhookOutco
     { reportId: payment.reportId, reference: data.reference, amountMinor: payment.amountMinor },
     'report unlocked by payment',
   );
+
+  // Not awaited: Paystack is waiting on this response and will retry the whole
+  // webhook if it is slow or errors. The unlock is already committed, so a
+  // failed email must not cause a redelivery of an event we have handled.
+  sendInBackground(() => sendReportUnlocked(payment.reportId), {
+    reportId: payment.reportId,
+    email: 'unlocked',
+  });
 
   return { handled: true, reportId: payment.reportId, alreadyProcessed: false };
 }
