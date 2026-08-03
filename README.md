@@ -198,6 +198,25 @@ Three properties the webhook handler has to get right, all covered by
 - **Always 200 once the signature is good**, even for events we ignore. A
   non-2xx tells Paystack to retry an event we will never handle.
 
+### Currency
+
+**The Paystack account is NGN-only.** Initializing a USD transaction returns
+403 `Currency not supported by merchant`; Nigerian accounts do not accept USD
+until it is enabled on the account.
+
+So `REPORT_CURRENCY=NGN` and the price is in **kobo**: ₦25,000 →
+`REPORT_PRICE_MINOR=2500000`.
+
+₦25,000 is **not** a conversion of the $49 in `BUSINESS_MODEL.md` — at ₦1,400/$
+that would be ₦68,600. It is a deliberately lower local price, because ₦68,600 is
+a considered purchase for a Nigerian SMB rather than the impulse buy that
+document assumes. Margin absorbs it easily: the audit costs about $0.20 to
+produce, so ₦25,000 is still a ~99% margin, and at this price point volume
+matters more than unit price.
+
+Selling internationally at $49 would mean enabling USD on the Paystack account,
+which is a separate approval.
+
 ### Testing payments without money
 
 ```sh

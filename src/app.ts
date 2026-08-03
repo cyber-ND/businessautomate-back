@@ -52,10 +52,31 @@ export async function buildApp() {
     timeWindow: '1 minute',
   });
 
-  // Accept a bodyless POST without demanding a Content-Type. Fastify otherwise
-  // answers 415, which is what a plain "retry" button sends — a confusing
-  // media-type error for a request that carries no media at all. Anything with
-  // an actual body and an unrecognised type still gets 415.
+  // Several endpoints legitimately take no body — checkout, retry. Fastify's
+  // defaults reject both shapes such a request can take: 415 when the
+  // Content-Type is absent, and 400 when it is `application/json` but the body
+  // is empty. Both are confusing answers to a request that simply has no
+  // payload, so empty bodies are normalised to `{}` and validated by the route's
+  // own schema instead.
+  //
+  // The webhook route overrides the JSON parser inside its own scope to keep raw
+  // bytes for signature checking; this root-level parser does not affect it.
+  app.addContentTypeParser('application/json', { parseAs: 'string' }, (_request, body, done) => {
+    const text = typeof body === 'string' ? body.trim() : '';
+    if (text.length === 0) {
+      done(null, {});
+      return;
+    }
+    try {
+      done(null, JSON.parse(text));
+    } catch (cause) {
+      const error = new Error('Body is not valid JSON.') as Error & { statusCode?: number };
+      error.statusCode = 400;
+      done(error, undefined);
+    }
+  });
+
+  // Anything with a real body and an unrecognised type still gets 415.
   app.addContentTypeParser('*', { parseAs: 'string' }, (_request, body, done) => {
     if (typeof body === 'string' && body.length === 0) {
       done(null, {});
