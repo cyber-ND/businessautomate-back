@@ -2,6 +2,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
 
 import { env } from '../../env.js';
+import { currencyForCountry } from '../intake/currency.js';
 import type { FollowUp, Intake } from '../intake/schema.js';
 import { AuditSchema, TriageSchema, recomputeTotals, type Triage } from './audit-schema.js';
 import {
@@ -105,6 +106,7 @@ export class ClaudeProvider implements AiProvider {
     tier: ReportTier,
   ): Promise<AuditResult> {
     const model = this.modelFor(tier);
+    const currency = currencyForCountry(intake.country);
 
     // Streaming, then collecting the final message, for two reasons.
     //
@@ -129,7 +131,9 @@ export class ClaudeProvider implements AiProvider {
             format: zodOutputFormat(AuditSchema),
           },
           system: AUDIT_SYSTEM_PROMPT,
-          messages: [{ role: 'user', content: buildAuditUserPrompt(intake, followUps) }],
+          messages: [
+            { role: 'user', content: buildAuditUserPrompt(intake, followUps, currency) },
+          ],
         })
         .finalMessage();
     } catch (error) {
@@ -193,6 +197,18 @@ export class ClaudeProvider implements AiProvider {
           .join('; ')}`,
         'EMPTY',
         { cause: validated.error },
+      );
+    }
+
+    // Reject an audit denominated in a currency we did not ask for. Amounts
+    // reasoned in dollars but rendered with a naira symbol would be wrong by
+    // roughly 1,400x and look entirely plausible on the page — so a mismatch is
+    // treated as a failed generation rather than something to paper over by
+    // overwriting the field.
+    if (validated.data.currency !== currency) {
+      throw new AuditGenerationError(
+        `Audit came back in ${validated.data.currency} but ${currency} was requested.`,
+        'CURRENCY_MISMATCH',
       );
     }
 

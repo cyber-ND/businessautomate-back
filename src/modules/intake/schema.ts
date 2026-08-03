@@ -66,12 +66,16 @@ const TEAM_SIZE_LABELS: Record<TeamSize, string> = {
   TWENTYONE_PLUS: '21 or more people',
 };
 
+// The buckets are USD-anchored because they are the same for every market, and
+// the label says so explicitly. Without that, a prompt asking for naira output
+// alongside an unlabelled "$5,000-$20,000" reads as two conflicting currencies
+// and leaves the model to guess which one the audit should be in.
 const REVENUE_LABELS: Record<RevenueRange, string> = {
-  UNDER_5K: 'under $5,000/month',
-  FIVE_TO_20K: '$5,000-$20,000/month',
-  TWENTY_TO_50K: '$20,000-$50,000/month',
-  FIFTY_TO_200K: '$50,000-$200,000/month',
-  OVER_200K: 'over $200,000/month',
+  UNDER_5K: 'under USD 5,000/month equivalent',
+  FIVE_TO_20K: 'USD 5,000-20,000/month equivalent',
+  TWENTY_TO_50K: 'USD 20,000-50,000/month equivalent',
+  FIFTY_TO_200K: 'USD 50,000-200,000/month equivalent',
+  OVER_200K: 'over USD 200,000/month equivalent',
   PREFER_NOT_TO_SAY: 'declined to say',
 };
 

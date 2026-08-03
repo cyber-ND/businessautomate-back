@@ -1,6 +1,6 @@
 import { env } from '../../env.js';
 import type { Audit } from '../ai-engine/audit-schema.js';
-import { formatAuditUsd, formatPrice } from './money.js';
+import { formatMinorUnits, formatMoney } from '../intake/currency.js';
 
 // Emails are written the way the report is: their numbers, their words, no
 // marketing voice. The whole persuasive weight of a follow-up is that it quotes
@@ -62,11 +62,26 @@ function headline(text: string): string {
   return `<h1 style="margin:0 0 16px;font-size:22px;line-height:1.3;color:${COLORS.ink};">${text}</h1>`;
 }
 
+// Two currencies exist in one email and confusing them would be expensive.
+//
+// Audit figures are in the CUSTOMER's currency, produced by the model and
+// carried on the audit itself. The report price is in whatever Paystack is
+// configured to charge, held in minor units. These helpers keep the distinction
+// explicit rather than letting a bare number pick up whichever symbol is nearby.
+
+function money(audit: Audit, amount: number): string {
+  return formatMoney(amount, audit.currency);
+}
+
+function price(): string {
+  return formatMinorUnits(env.REPORT_PRICE_MINOR, env.REPORT_CURRENCY);
+}
+
 function describeFindings(audit: Audit): string {
-  const { opportunityCount, monthlySavingsUsd, hoursSavedPerWeek } = audit.totals;
+  const { opportunityCount, monthlySavings, hoursSavedPerWeek } = audit.totals;
   return `${opportunityCount} ${
     opportunityCount === 1 ? 'opportunity' : 'opportunities'
-  } worth about ${formatAuditUsd(monthlySavingsUsd)}/month and ${hoursSavedPerWeek} hours a week`;
+  } worth about ${money(audit, monthlySavings)}/month and ${hoursSavedPerWeek} hours a week`;
 }
 
 /** Sent as soon as generation finishes. The visitor may have closed the tab. */
@@ -85,9 +100,9 @@ export function reportReadyEmail(params: {
   const topProblem = audit.opportunities.find((o) => o.rank === 1) ?? audit.opportunities[0];
 
   return {
-    subject: `Your audit found ${formatAuditUsd(audit.totals.monthlySavingsUsd)}/month${who}`,
+    subject: `Your audit found ${money(audit, audit.totals.monthlySavings)}/month${who}`,
     html: layout(`
-      ${headline(`Your audit is ready`)}
+      ${headline('Your audit is ready')}
       <p style="margin:0 0 16px;">We found ${findings}.</p>
       ${
         topProblem
@@ -163,12 +178,18 @@ export function followUpEmail(params: {
 }): EmailContent {
   const { reportId, businessName, audit, attempt } = params;
   const url = reportUrl(reportId);
-  const price = formatPrice();
-  const total = formatAuditUsd(audit.totals.monthlySavingsUsd);
+  const unlockPrice = price();
+  const total = money(audit, audit.totals.monthlySavings);
 
   if (attempt >= 2) {
     const top = audit.opportunities.find((o) => o.rank === 1) ?? audit.opportunities[0];
-    const cost = top ? formatAuditUsd(top.monthlyCostUsd) : total;
+    const cost = top ? money(audit, top.monthlyCost) : total;
+    const toolCost = top
+      ? money(
+          audit,
+          top.tools.reduce((sum, tool) => sum + tool.monthlyCost, 0),
+        )
+      : null;
 
     return {
       subject: `${cost}/month, still leaking`,
@@ -177,20 +198,20 @@ export function followUpEmail(params: {
         ${
           top
             ? `<p style="margin:0 0 16px;padding-left:16px;border-left:3px solid ${COLORS.rule};">${top.problem}</p>
-               <p style="margin:0 0 16px;">That one costs about ${cost} a month. The fix is a ${formatAuditUsd(
-                 top.tools.reduce((sum, tool) => sum + tool.monthlyCostUsd, 0),
-               )}/month tool and an afternoon of setup.</p>`
+               <p style="margin:0 0 16px;">That one costs about ${cost} a month. The fix is a ${toolCost}/month tool and an afternoon of setup.</p>`
             : `<p style="margin:0 0 16px;">Your audit found ${total} a month in recoverable losses.</p>`
         }
-        ${button(url, `Unlock the full report — ${price}`)}
+        ${button(url, `Unlock the full report — ${unlockPrice}`)}
         <p style="margin:0;font-size:14px;color:${COLORS.muted};">This is the last email we will send about this audit.</p>
       `),
       text: [
         'One thing, before we leave you alone.',
         '',
-        ...(top ? [top.problem, '', `That one costs about ${cost} a month.`] : [`Your audit found ${total} a month in recoverable losses.`]),
+        ...(top
+          ? [top.problem, '', `That one costs about ${cost} a month. The fix is a ${toolCost}/month tool.`]
+          : [`Your audit found ${total} a month in recoverable losses.`]),
         '',
-        `Unlock the full report (${price}): ${url}`,
+        `Unlock the full report (${unlockPrice}): ${url}`,
         '',
         'This is the last email we will send about this audit.',
       ].join('\n'),
@@ -203,7 +224,7 @@ export function followUpEmail(params: {
       ${headline(`${total} a month${businessName ? `, at ${businessName}` : ''}`)}
       <p style="margin:0 0 16px;">That is what your audit found across ${describeFindings(audit)}. You have read the problems. The fixes are still locked.</p>
       <p style="margin:0 0 16px;">The full report names every tool with its price, gives you the first step for each fix, and lays out a 30/60/90-day plan.</p>
-      ${button(url, `Unlock the full report — ${price}`)}
+      ${button(url, `Unlock the full report — ${unlockPrice}`)}
       <p style="margin:0;font-size:14px;color:${COLORS.muted};">One payment, this report, no subscription.</p>
     `),
     text: [
@@ -213,7 +234,7 @@ export function followUpEmail(params: {
       '',
       'The full report names every tool with its price, gives you the first step for each fix, and lays out a 30/60/90-day plan.',
       '',
-      `Unlock it (${price}): ${url}`,
+      `Unlock it (${unlockPrice}): ${url}`,
       '',
       'One payment, this report, no subscription.',
     ].join('\n'),

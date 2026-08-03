@@ -37,9 +37,7 @@ function estimateCostUsd(model: string, inputTokens: number, outputTokens: numbe
   return (inputTokens / 1_000_000) * rate.input + (outputTokens / 1_000_000) * rate.output;
 }
 
-function money(value: number): string {
-  return `$${value.toLocaleString('en-US', { maximumFractionDigits: 0 })}`;
-}
+const { formatMoney: money } = await import('../modules/intake/currency.js');
 
 function rule(label = ''): void {
   const line = '─'.repeat(74);
@@ -98,9 +96,10 @@ if (asJson) {
 
   console.log(audit.businessSummary);
 
+  console.log(`\nCurrency: ${audit.currency}`);
   console.log(
-    `\nTOTAL PRIZE: ${audit.totals.opportunityCount} opportunities worth ` +
-      `${money(audit.totals.monthlySavingsUsd)}/month and ${audit.totals.hoursSavedPerWeek} hrs/week`,
+    `TOTAL PRIZE: ${audit.totals.opportunityCount} opportunities worth ` +
+      `${money(audit.totals.monthlySavings, audit.currency)}/month and ${audit.totals.hoursSavedPerWeek} hrs/week`,
   );
 
   for (const opportunity of audit.opportunities) {
@@ -112,20 +111,22 @@ if (asJson) {
     // clearly worth paying for?
     console.log(`FREE   problem:  ${opportunity.problem}`);
     console.log(
-      `FREE   costs:    ${money(opportunity.monthlyCostUsd)}/month, ${opportunity.hoursLostPerWeek} hrs/week`,
+      `FREE   costs:    ${money(opportunity.monthlyCost, audit.currency)}/month, ${opportunity.hoursLostPerWeek} hrs/week`,
     );
     console.log(
-      `FREE   upside:   ${money(opportunity.monthlySavingsUsd)}/month, ${opportunity.hoursSavedPerWeek} hrs/week`,
+      `FREE   upside:   ${money(opportunity.monthlySavings, audit.currency)}/month, ${opportunity.hoursSavedPerWeek} hrs/week`,
     );
 
-    const toolCost = opportunity.tools.reduce((sum, tool) => sum + tool.monthlyCostUsd, 0);
+    const toolCost = opportunity.tools.reduce((sum, tool) => sum + tool.monthlyCost, 0);
     console.log(
-      `FREE   teaser:   a ${money(toolCost)}/month tool fixes this — named in your full report`,
+      `FREE   teaser:   a ${money(toolCost, audit.currency)}/month tool fixes this — named in your full report`,
     );
 
     console.log(`LOCKED solution: ${opportunity.solution}`);
     for (const tool of opportunity.tools) {
-      console.log(`LOCKED tool:     ${tool.name} (${money(tool.monthlyCostUsd)}/mo) — ${tool.whyThisFits}`);
+      console.log(
+        `LOCKED tool:     ${tool.name} (${money(tool.monthlyCost, audit.currency)}/mo) — ${tool.whyThisFits}`,
+      );
     }
     console.log(`LOCKED first:    ${opportunity.firstStep}`);
   }

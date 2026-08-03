@@ -78,6 +78,37 @@ Fixtures live in `src/scripts/fixtures.ts`. The `vague` fixture is deliberately
 thin: triage should want a follow-up question there, and if it does not, the
 triage prompt is too permissive.
 
+### Currency
+
+**The audit is denominated in the customer's own currency**, chosen from the
+country they typed during intake ([`currency.ts`](src/modules/intake/currency.ts)):
+Nigeria → NGN, Ghana → GHS, Kenya → KES, South Africa → ZAR, anything else → USD.
+
+A Lagos salon owner reading "$700/month is leaking" has to convert before she can
+feel it, and that conversion is the moment the number stops being credible.
+"₦983,000 a month" lands. Since every figure is an estimate anyway, the fix
+belongs at generation — the model reasons in naira — rather than as a display
+conversion, which would compound estimate error with exchange-rate error and go
+stale.
+
+Two safeguards, because the failure mode here is a silent ~1,400x error that
+looks entirely plausible on the page:
+
+- The prompt carries a **scale hint** per currency ("a small salon might lose
+  ₦500,000-₦1,500,000 a month"), because a model asked for naira will otherwise
+  produce dollar-sized numbers with a naira symbol.
+- The model **echoes back the currency it used**, and a mismatch against what we
+  requested fails the generation (`CURRENCY_MISMATCH`) rather than being
+  overwritten. Trusting our own label over the model's arithmetic is what would
+  ship the 1,400x error.
+
+Revenue buckets in the intake stay USD-anchored, since they are the same for
+every market, and are labelled "USD equivalent" so the prompt does not read as
+two conflicting currencies.
+
+> Audits generated before this change stored `monthlyCostUsd` / `monthlySavingsUsd`
+> and no `currency`, so they no longer validate and must be regenerated.
+
 ### Measurements
 
 All on the `salon` fixture, 3,493 input tokens:
@@ -274,13 +305,18 @@ the address owning the Resend account. Once `brainycyber.com` is verified in
 Resend, switch it to an address on that domain — production refuses to boot with
 a `resend.dev` sender.
 
-### Known rough edge: two currencies
+### Currencies in email
 
-The audit is denominated in **USD** (the model reasons in dollars; every field is
-`...Usd`) while the price is in **NGN**. So a follow-up email reads "$770 a
-month" and then "Unlock it (₦25,000)", which asks a Nigerian reader to convert
-before they can judge the offer. Worth fixing by having the model produce figures
-in the customer's own currency.
+Two currencies exist and confusing them would be expensive, so
+[`templates.ts`](src/modules/email/templates.ts) has one helper for each:
+
+- `money(audit, amount)` — audit figures, in the **customer's** currency, taken
+  from the audit itself.
+- `price()` — the report price, from config, in **minor units**.
+
+They agree for a Nigerian customer at an NGN price, which is the intended case.
+An international customer would read a USD audit and an NGN price, which is why
+`REPORT_CURRENCY` should track the primary market.
 
 ## Branching
 

@@ -1,11 +1,18 @@
 import { z } from 'zod';
 
+import { SUPPORTED_CURRENCIES } from '../intake/currency.js';
+
 // The audit contract, enforced by the API through structured outputs. A response
 // that reaches our code has already been validated against this schema, so there
 // is no JSON parsing to do and no repair path to write.
 //
 // Every `.describe()` is sent to the model as part of the schema, so these
 // strings are prompt surface rather than comments. Keep them instructive.
+//
+// Money fields carry no currency suffix. Every amount in one audit is in the
+// SAME currency, named once by the top-level `currency` field, which is the
+// customer's own — a Nigerian business reads naira throughout, never dollars it
+// has to convert.
 //
 // Numeric and array bounds are deliberately loose. The SDK strips JSON Schema
 // constraints the API does not support and validates them client-side instead,
@@ -18,10 +25,10 @@ export const ToolRecommendationSchema = z
     name: z
       .string()
       .describe('Exact product name, e.g. "Zoho Books" — never a category like "an accounting tool".'),
-    monthlyCostUsd: z
+    monthlyCost: z
       .number()
       .describe(
-        'Realistic monthly cost in USD for THIS business at THIS size. Use 0 only when a free tier genuinely covers their volume.',
+        "Realistic monthly cost for THIS business at THIS size, in the audit's currency. Use 0 only when a free tier genuinely covers their volume.",
       ),
     whyThisFits: z
       .string()
@@ -44,18 +51,20 @@ export const OpportunitySchema = z
       .describe(
         'The specific operational leak, written back to the owner in their own terms and referencing details they actually gave. Never generic.',
       ),
-    monthlyCostUsd: z
+    monthlyCost: z
       .number()
       .describe(
-        'What this problem costs them per month right now, in USD, anchored to their stated revenue and admin hours. Be conservative: a number they recognise as fair beats an impressive one.',
+        "What this problem costs them per month right now, in the audit's currency, anchored to their stated revenue and admin hours. Be conservative: a number they recognise as fair beats an impressive one.",
       ),
     hoursLostPerWeek: z.number().describe('Hours per week currently lost to this problem.'),
     difficulty: z
       .enum(['EASY', 'MEDIUM', 'HARD'])
       .describe('EASY: under a day, no technical help. MEDIUM: about a week, or outside help. HARD: a project.'),
-    monthlySavingsUsd: z
+    monthlySavings: z
       .number()
-      .describe('Realistic monthly saving in USD once fixed, net of the recommended tool cost.'),
+      .describe(
+        "Realistic monthly saving once fixed, in the audit's currency, net of the recommended tool cost.",
+      ),
     hoursSavedPerWeek: z.number().describe('Hours per week freed once fixed.'),
 
     // ---- Locked behind payment: the prescription. ----
@@ -73,7 +82,7 @@ export const OpportunitySchema = z
 
 export const AuditTotalsSchema = z
   .object({
-    monthlySavingsUsd: z.number().describe('Sum of monthlySavingsUsd across all opportunities.'),
+    monthlySavings: z.number().describe('Sum of monthlySavings across all opportunities.'),
     hoursSavedPerWeek: z.number().describe('Sum of hoursSavedPerWeek across all opportunities.'),
     opportunityCount: z.number().int().describe('Number of opportunities found.'),
   })
@@ -89,6 +98,13 @@ export const RoadmapSchema = z
 
 export const AuditSchema = z
   .object({
+    // Echoed back by the model rather than attached by us afterwards, so a
+    // mismatch is detectable. A model that quietly reasons in dollars while we
+    // label the result naira produces a silent ~1,400x error — the single worst
+    // failure mode this schema can have, and the reason this field exists.
+    currency: z
+      .enum(SUPPORTED_CURRENCIES)
+      .describe('The currency code you were asked to use. Every amount in this audit must be in it.'),
     businessSummary: z
       .string()
       .describe(
@@ -135,19 +151,20 @@ export type Triage = z.infer<typeof TriageSchema>;
 
 /**
  * Totals are the headline numbers on the paywall screen ("5 opportunities worth
- * ~$2,100/month"), so they must equal the opportunities they claim to summarise.
- * The model computes them and usually gets it right, but a summed figure that
- * contradicts the visible line items is the single most trust-destroying bug
- * this product could ship — so we recompute rather than trust.
+ * ~₦980,000/month"), so they must equal the opportunities they claim to
+ * summarise. The model computes them and usually gets it right, but a summed
+ * figure that contradicts its own visible line items is the single most
+ * trust-destroying bug this product could ship — so we recompute rather than
+ * trust.
  */
 export function recomputeTotals(audit: Audit): Audit {
-  const monthlySavingsUsd = audit.opportunities.reduce((sum, o) => sum + o.monthlySavingsUsd, 0);
+  const monthlySavings = audit.opportunities.reduce((sum, o) => sum + o.monthlySavings, 0);
   const hoursSavedPerWeek = audit.opportunities.reduce((sum, o) => sum + o.hoursSavedPerWeek, 0);
 
   return {
     ...audit,
     totals: {
-      monthlySavingsUsd: Math.round(monthlySavingsUsd),
+      monthlySavings: Math.round(monthlySavings),
       // One decimal place: "11.5 hrs/week" reads as measured, "11.4999" does not.
       hoursSavedPerWeek: Math.round(hoursSavedPerWeek * 10) / 10,
       opportunityCount: audit.opportunities.length,
