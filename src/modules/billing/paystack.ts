@@ -17,7 +17,13 @@ export class PaystackNotConfiguredError extends Error {
 export class PaystackApiError extends Error {
   constructor(
     message: string,
-    readonly status: number,
+    /**
+     * Paystack's HTTP status. Deliberately NOT named `statusCode`: Fastify's
+     * error handler reads that property and would relay Paystack's status
+     * straight to our client, so a 403 from Paystack would surface as a 403
+     * from us and read as an auth problem on our own API.
+     */
+    readonly upstreamStatus: number,
   ) {
     super(message);
     this.name = 'PaystackApiError';
@@ -76,13 +82,27 @@ export async function initializeTransaction(
     }),
   });
 
-  const payload = (await response.json().catch(() => null)) as
-    | { status?: boolean; message?: string; data?: { authorization_url?: string; access_code?: string; reference?: string } }
-    | null;
+  // Read as text first. Paystack does not always answer with JSON on an error
+  // (an auth failure can come back as HTML), and .json() would throw and hide
+  // whatever it actually said.
+  const rawBody = await response.text();
+
+  interface InitializeResponse {
+    status?: boolean;
+    message?: string;
+    data?: { authorization_url?: string; access_code?: string; reference?: string };
+  }
+
+  let payload: InitializeResponse | null = null;
+  try {
+    payload = JSON.parse(rawBody) as InitializeResponse;
+  } catch {
+    payload = null;
+  }
 
   if (!response.ok || !payload?.status || !payload.data?.authorization_url) {
     throw new PaystackApiError(
-      payload?.message ?? `Paystack returned ${response.status}`,
+      payload?.message ?? `Paystack returned ${response.status}: ${rawBody.slice(0, 300)}`,
       response.status,
     );
   }

@@ -53,8 +53,18 @@ export async function createCheckout(reportId: string): Promise<CheckoutSession>
   // Reuse an unpaid attempt rather than minting a new reference on every click.
   // Otherwise a customer who bounces off the payment page twice leaves three
   // pending rows and three references that could each still complete.
+  //
+  // Reuse only when the price still matches. If pricing or currency changed
+  // since the row was written, the stored amount would no longer describe what
+  // we are about to ask Paystack to charge, and reconciling the webhook against
+  // it would compare two different numbers.
   const existing = await prisma.payment.findFirst({
-    where: { reportId, status: 'PENDING' },
+    where: {
+      reportId,
+      status: 'PENDING',
+      amountMinor: env.REPORT_PRICE_MINOR,
+      currency: env.REPORT_CURRENCY,
+    },
     orderBy: { createdAt: 'desc' },
   });
 

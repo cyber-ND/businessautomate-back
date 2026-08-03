@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 
 import { logger } from '../../logger.js';
-import { isPaystackConfigured, verifyWebhookSignature } from './paystack.js';
+import { PaystackApiError, isPaystackConfigured, verifyWebhookSignature } from './paystack.js';
 import {
   CheckoutStateError,
   ReportNotFoundError,
@@ -52,6 +52,25 @@ export async function registerBillingRoutes(app: FastifyInstance): Promise<void>
             .code(409)
             .send({ error: { code: 'WRONG_STATE', message: error.message } });
         }
+        if (error instanceof PaystackApiError) {
+          // 502, not Paystack's own status: the customer's request was fine, our
+          // payment provider is what failed. Relaying a 403 from Paystack would
+          // read as an authorisation problem with our API.
+          logger.error(
+            { err: error, upstreamStatus: error.upstreamStatus },
+            'Paystack rejected the transaction initialization',
+          );
+          return reply.code(502).send({
+            error: {
+              code: 'PAYMENT_PROVIDER_ERROR',
+              message: 'Could not start the payment. Please try again shortly.',
+              // Safe to expose: Paystack's messages describe configuration
+              // problems ("currency not supported"), not anything sensitive, and
+              // hiding them makes this class of failure very hard to diagnose.
+              detail: error.message,
+            },
+          });
+        }
         throw error;
       }
     },
@@ -63,6 +82,12 @@ export async function registerBillingRoutes(app: FastifyInstance): Promise<void>
   // Scoping the parser this way keeps every other route on the normal fast JSON
   // path.
   await app.register(async (scope) => {
+    // The scope inherits the root JSON parser, and Fastify refuses to register
+    // a second one for the same content type, so the inherited one is dropped
+    // first. Because this is an encapsulated scope, the removal applies only
+    // here — every other route keeps the root parser.
+    scope.removeContentTypeParser('application/json');
+
     scope.addContentTypeParser(
       'application/json',
       { parseAs: 'buffer' },
