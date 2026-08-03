@@ -228,6 +228,60 @@ Runs in-process via `app.inject()` — no server, no network, no Paystack accoun
 needed. Only the checkout-URL call (`POST /api/checkout/:reportId`) requires a
 real `PAYSTACK_SECRET_KEY`, since that one genuinely talks to Paystack.
 
+## Email
+
+Resend. Four messages, all rendered from the stored audit so they quote the
+customer's own numbers — a generic "come back and buy" is both less persuasive
+and more likely to be marked as spam.
+
+| Message           | Trigger                                    |
+| ----------------- | ------------------------------------------ |
+| `report-ready`    | generation completes                       |
+| `report-unlocked` | payment webhook unlocks the report         |
+| `follow-up-1`     | 24h after completion, still unpaid         |
+| `follow-up-2`     | 24h after the first nudge, still unpaid    |
+
+**Email is a side effect, never a dependency.** Nothing in the funnel fails
+because a message could not be delivered — the report still exists, the customer
+can still reach it, the payment still unlocked it. Every send logs and swallows.
+Sends are also never awaited by the caller: the report pipeline must not turn a
+successful audit into a failure over a Resend outage, and the webhook must not be
+slow enough for Paystack to retry an event already handled.
+
+Each send is guarded by a timestamp column (`readyEmailSentAt`,
+`unlockedEmailSentAt`, `followUpsSent`) stamped **only on success**, so a
+transient outage does not permanently suppress a message while a retry cannot
+send it twice.
+
+The follow-up delay is measured from the *last* contact rather than from
+completion — otherwise both nudges would fire in the same sweep the moment a
+report aged past the threshold.
+
+### Working on email
+
+```sh
+npm run email:preview                   # render all four to ./email-preview, send nothing
+npm run email:follow-ups -- --dry-run   # log which reports would be nudged
+npm run email:follow-ups                # actually send
+```
+
+`email:follow-ups` is designed to run on a schedule and is safe to run more often
+than needed. Selection is conservative: completed, unpaid, under
+`FOLLOW_UP_MAX`, and quiet for at least `FOLLOW_UP_DELAY_HOURS`.
+
+`EMAIL_FROM` currently uses Resend's shared test sender, which only delivers to
+the address owning the Resend account. Once `brainycyber.com` is verified in
+Resend, switch it to an address on that domain — production refuses to boot with
+a `resend.dev` sender.
+
+### Known rough edge: two currencies
+
+The audit is denominated in **USD** (the model reasons in dollars; every field is
+`...Usd`) while the price is in **NGN**. So a follow-up email reads "$770 a
+month" and then "Unlock it (₦25,000)", which asks a Nigerian reader to convert
+before they can judge the offer. Worth fixing by having the model produce figures
+in the customer's own currency.
+
 ## Branching
 
 `main` is the deployable branch. `dev` is integration. Every feature or milestone

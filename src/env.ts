@@ -69,6 +69,22 @@ const schema = z.object({
   // touches a float. 4900 = $49.00.
   REPORT_CURRENCY: z.enum(['NGN', 'USD']).default('USD'),
   REPORT_PRICE_MINOR: z.coerce.number().int().positive().default(4900),
+
+  // --- Email (Resend) ---
+  RESEND_API_KEY: z.string().optional(),
+
+  // Must be on a domain verified in Resend. `onboarding@resend.dev` is Resend's
+  // shared test sender and works without verification, but it will only deliver
+  // to the address that owns the Resend account — fine for development, useless
+  // for real customers.
+  EMAIL_FROM: z.string().min(1).default('BusinessAutomate <onboarding@resend.dev>'),
+
+  // Hours to wait after a report completes before nudging a non-payer.
+  FOLLOW_UP_DELAY_HOURS: z.coerce.number().int().nonnegative().default(24),
+  // How many nudges one report may ever generate. Past this we stop: a third
+  // reminder is not persuasion, it is spam, and it costs the sending domain's
+  // reputation.
+  FOLLOW_UP_MAX: z.coerce.number().int().nonnegative().default(2),
 })
   .superRefine((value, ctx) => {
     if (value.NODE_ENV === 'production' && !value.PAYSTACK_SECRET_KEY) {
@@ -78,9 +94,38 @@ const schema = z.object({
         message: 'required in production — the app must not serve a paywall it cannot charge for',
       });
     }
+
+    if (value.NODE_ENV === 'production' && !value.RESEND_API_KEY) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['RESEND_API_KEY'],
+        message:
+          'required in production — a report nobody can be told about is a report nobody reads',
+      });
+    }
+
+    if (value.NODE_ENV === 'production' && value.EMAIL_FROM.includes('resend.dev')) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['EMAIL_FROM'],
+        message:
+          "must use a verified domain in production — Resend's shared test sender only delivers to the account owner",
+      });
+    }
   });
 
-const parsed = schema.safeParse(process.env);
+// An empty variable means "not set", not "set to empty".
+//
+// `.env` files and deploy dashboards both make it easy to leave a name behind
+// with no value. Zod treats `''` as a present value, so an empty EMAIL_FROM=
+// would override its default and an empty PAYSTACK_SECRET_KEY= would read as
+// configured, then fail at the first charge. Stripping blanks up front makes
+// defaults and `.optional()` behave the way the schema reads.
+const presentVariables = Object.fromEntries(
+  Object.entries(process.env).filter(([, value]) => value !== undefined && value.trim() !== ''),
+);
+
+const parsed = schema.safeParse(presentVariables);
 
 if (!parsed.success) {
   const issues = parsed.error.issues

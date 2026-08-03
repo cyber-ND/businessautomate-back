@@ -91,6 +91,14 @@ model Report {
   failureCode String?
   attempts    Int       @default(0)
 
+  // Email state. Recorded per report rather than inferred, because "have we
+  // already told this person?" cannot be reconstructed from status alone, and
+  // sending the same email twice is worse than not sending it.
+  readyEmailSentAt    DateTime?
+  unlockedEmailSentAt DateTime?
+  followUpsSent       Int       @default(0)
+  lastFollowUpAt      DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -103,6 +111,8 @@ model Report {
   // The stale-job reaper scans for PROCESSING rows by age; this serves it
   // directly instead of filtering a full status scan.
   @@index([status, startedAt])
+  // The follow-up sweep looks for completed, unpaid, under-nudged reports.
+  @@index([status, paidAt, followUpsSent])
 }
 
 model Payment {
