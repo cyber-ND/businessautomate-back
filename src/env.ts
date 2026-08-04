@@ -94,6 +94,27 @@ const schema = z.object({
   // for real customers.
   EMAIL_FROM: z.string().min(1).default('BusinessAutomate <onboarding@resend.dev>'),
 
+  // --- Abuse caps and recovery ---
+
+  // Free audits one email address may consume. BUSINESS_MODEL.md specifies 1-2.
+  // Free audits cost real model tokens, so this is the difference between
+  // marketing spend and an open tab.
+  FREE_AUDIT_LIMIT_PER_EMAIL: z.coerce.number().int().positive().default(2),
+
+  // How long a report may sit PROCESSING before it is presumed abandoned.
+  // Generation takes 75-115s, so this must be comfortably above that — reaping a
+  // report that is merely slow would run a second expensive generation
+  // alongside the first.
+  REPORT_STALE_AFTER_MINUTES: z.coerce.number().int().positive().default(10),
+
+  // Total generation attempts before a report is left FAILED for the customer to
+  // retry deliberately. Guards against a poison intake retrying forever.
+  REPORT_MAX_ATTEMPTS: z.coerce.number().int().positive().default(3),
+
+  // How often the reaper sweeps. It also runs once at boot, which is the case it
+  // mainly exists for.
+  REAPER_INTERVAL_MINUTES: z.coerce.number().int().positive().default(5),
+
   // Hours to wait after a report completes before nudging a non-payer.
   FOLLOW_UP_DELAY_HOURS: z.coerce.number().int().nonnegative().default(24),
   // How many nudges one report may ever generate. Past this we stop: a third
