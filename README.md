@@ -143,6 +143,7 @@ but the doc's figure is roughly half the real one.
 | `npm run dev`         | Watch mode via tsx                             |
 | `npm run audit -- salon` | Generate one real audit from a fixture and print it |
 | `npm run paystack:currencies` | Ask Paystack which currencies it will actually accept |
+| `npm run reap`        | Sweep for stalled reports once, by hand      |
 | `npm run build`       | `prisma generate` then `tsc`                   |
 | `npm start`           | Run the compiled server (production)           |
 | `npm run typecheck`   | Types only, no emit                            |
@@ -203,6 +204,58 @@ never a second generation — free and paid viewers read the same document.
 
 `paid` is derived from `Report.paidAt`, which only a signature-verified Paystack
 webhook sets. It is never taken from anything the client supplies.
+
+## Abuse caps and recovery
+
+### Free-audit cap
+
+`BUSINESS_MODEL.md` caps free audits at 1-2 per email; `FREE_AUDIT_LIMIT_PER_EMAIL`
+enforces it (default 2). Each free audit costs real model tokens, so this is the
+line between marketing spend and an open tab.
+
+Checked before the row is created, so a blocked attempt costs nothing. Two
+deliberate exclusions from the count:
+
+- **FAILED reports don't count.** A generation that broke on our side must not
+  cost the visitor an audit.
+- **Re-runs don't count.** They inherit a parent's payment and are part of what
+  that payment bought.
+
+Exceeding it returns **403 `FREE_LIMIT_REACHED`** — not 429, which would invite a
+retry — carrying `existingReportId` so the client can send them to the audit they
+already have. Most people hitting this simply forgot they had one.
+
+The per-IP rate limit on `POST /api/reports` is a separate concern: that stops a
+flood, this stops one person quietly running twenty free audits.
+
+### Stalled-report reaper
+
+Generation runs in the web process rather than a queue. The cost of that trade is
+this: when the process restarts mid-generation — a Railway redeploy, a crash, an
+OOM — the report is abandoned with its row still saying `PROCESSING` and nothing
+working on it. The visitor watches an analysing screen forever, which is the worst
+failure this product has: they waited, and we lost their audit.
+
+The reaper sweeps at boot and every `REAPER_INTERVAL_MINUTES`, recovering two
+shapes:
+
+| Shape                                    | Cause                                        |
+| ---------------------------------------- | -------------------------------------------- |
+| `PENDING` with no `startedAt`, past cutoff | died between creating the row and starting work |
+| `PROCESSING` older than cutoff             | died during generation                        |
+
+`REPORT_STALE_AFTER_MINUTES` (default 10) must stay comfortably above the 75-115s
+generation time — reaping a report that is merely slow would run a second
+expensive generation alongside the first. Past `REPORT_MAX_ATTEMPTS` a report is
+left `FAILED` for the customer to retry deliberately, rather than looping forever
+on a poison intake.
+
+The boot sweep is the one that matters: a restart is the main way reports get
+abandoned.
+
+```sh
+npm run reap    # sweep once by hand, e.g. after an incident
+```
 
 ## Payments
 

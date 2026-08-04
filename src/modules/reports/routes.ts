@@ -3,6 +3,7 @@ import { z } from 'zod';
 
 import { IntakeSchema } from '../intake/schema.js';
 import {
+  FreeAuditLimitError,
   ReportNotFoundError,
   ReportStateError,
   answerFollowUp,
@@ -50,8 +51,26 @@ export async function registerReportRoutes(app: FastifyInstance): Promise<void> 
         });
       }
 
-      const report = await createReport(parsed.data);
-      return reply.code(202).send(report);
+      try {
+        const report = await createReport(parsed.data);
+        return reply.code(202).send(report);
+      } catch (error) {
+        if (error instanceof FreeAuditLimitError) {
+          // 403, not 429: this is not "too fast", it is "that is all the free
+          // audits this address gets". A 429 would invite the client to retry.
+          return reply.code(403).send({
+            error: {
+              code: 'FREE_LIMIT_REACHED',
+              message: `You have used your ${error.limit} free audits. Open your existing audit, or unlock the full report to go further.`,
+              limit: error.limit,
+              // Lets the client link straight to the audit they already have
+              // rather than dead-ending. Most people hitting this simply forgot.
+              existingReportId: error.latestReportId,
+            },
+          });
+        }
+        throw error;
+      }
     },
   );
 

@@ -49,6 +49,42 @@ export class ReportStateError extends Error {
   }
 }
 
+/**
+ * This email has used up its free audits.
+ *
+ * Carries the most recent report so the client can send them back to the audit
+ * they already have rather than dead-ending. Someone hitting this limit is
+ * usually not an abuser — they are a returning visitor who forgot they had one.
+ */
+export class FreeAuditLimitError extends Error {
+  constructor(
+    readonly limit: number,
+    readonly latestReportId: string | null,
+  ) {
+    super(`This email has already used its ${limit} free audits.`);
+    this.name = 'FreeAuditLimitError';
+  }
+}
+
+/**
+ * Free audits already consumed by an email address.
+ *
+ * Counts reports that are unpaid and not failed. FAILED is excluded because a
+ * generation that broke on our side must not burn the visitor's quota. Re-runs
+ * are excluded because they inherit a parent's payment and are part of what that
+ * payment bought.
+ */
+async function countFreeAuditsUsed(email: string): Promise<number> {
+  return prisma.report.count({
+    where: {
+      email,
+      paidAt: null,
+      parentReportId: null,
+      status: { in: ['PENDING', 'PROCESSING', 'AWAITING_ANSWERS', 'COMPLETED'] },
+    },
+  });
+}
+
 export interface ReportView {
   id: string;
   status: Report['status'];
@@ -93,6 +129,19 @@ function toView(report: Report): ReportView {
  */
 export async function createReport(input: unknown): Promise<ReportView> {
   const intake = IntakeSchema.parse(input);
+
+  // Checked before the row is created, so a blocked attempt costs nothing. The
+  // per-IP rate limit on this route is a separate concern: it stops a flood,
+  // while this stops one person quietly running twenty free audits.
+  const used = await countFreeAuditsUsed(intake.email);
+  if (used >= env.FREE_AUDIT_LIMIT_PER_EMAIL) {
+    const latest = await prisma.report.findFirst({
+      where: { email: intake.email, paidAt: null, parentReportId: null },
+      orderBy: { createdAt: 'desc' },
+      select: { id: true },
+    });
+    throw new FreeAuditLimitError(env.FREE_AUDIT_LIMIT_PER_EMAIL, latest?.id ?? null);
+  }
 
   const report = await prisma.report.create({
     data: {
@@ -266,6 +315,26 @@ async function fail(reportId: string, failureCode: string): Promise<void> {
     where: { id: reportId },
     data: { status: 'FAILED', failureCode },
   });
+}
+
+/**
+ * Restart work on a report the pipeline abandoned.
+ *
+ * Used by the reaper. Unlike `retryReport` there is no state guard: the reaper
+ * has already decided this report is stalled, and the point is to recover it.
+ */
+export function resumeReport(reportId: string): void {
+  startPipeline(reportId);
+}
+
+/** Attempts already made, so the reaper can stop retrying a poison report. */
+export function maxAttempts(): number {
+  return env.REPORT_MAX_ATTEMPTS;
+}
+
+/** Mark a report failed. Exposed for the reaper. */
+export async function failReport(reportId: string, failureCode: string): Promise<void> {
+  await fail(reportId, failureCode);
 }
 
 /** Retry a failed report. Exposed so the client can offer a retry button. */
