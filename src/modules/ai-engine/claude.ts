@@ -2,7 +2,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
 
 import { env } from '../../env.js';
-import { currencyForCountry } from '../intake/currency.js';
+import { auditCurrencyForCountry } from '../intake/currency.js';
 import type { FollowUp, Intake } from '../intake/schema.js';
 import { AuditSchema, TriageSchema, recomputeTotals, type Triage } from './audit-schema.js';
 import {
@@ -106,7 +106,9 @@ export class ClaudeProvider implements AiProvider {
     tier: ReportTier,
   ): Promise<AuditResult> {
     const model = this.modelFor(tier);
-    const currency = currencyForCountry(intake.country);
+    // Tied to what Paystack will accept, so the audit can always be sold. See
+    // auditCurrencyForCountry.
+    const currency = auditCurrencyForCountry(intake.country);
 
     // Streaming, then collecting the final message, for two reasons.
     //

@@ -231,22 +231,59 @@ Three properties the webhook handler has to get right, all covered by
 
 ### Currency
 
-**The Paystack account is NGN-only.** Initializing a USD transaction returns
-403 `Currency not supported by merchant`; Nigerian accounts do not accept USD
-until it is enabled on the account.
+Two questions, deliberately decoupled:
 
-So `REPORT_CURRENCY=NGN` and the price is in **kobo**: ₦25,000 →
-`REPORT_PRICE_MINOR=2500000`.
+**What currency is the audit written in?** The customer's own, always. Readability
+of the savings figures wins over matching the price line.
 
-₦25,000 is **not** a conversion of the $49 in `BUSINESS_MODEL.md` — at ₦1,400/$
-that would be ₦68,600. It is a deliberately lower local price, because ₦68,600 is
-a considered purchase for a Nigerian SMB rather than the impulse buy that
-document assumes. Margin absorbs it easily: the audit costs about $0.20 to
-produce, so ₦25,000 is still a ~99% margin, and at this price point volume
-matters more than unit price.
+**What currency do we charge in?** Whatever Paystack accepts, from
+`PAYSTACK_CURRENCIES` (most preferred first) — the audit's own currency where it
+is enabled, otherwise USD, otherwise the first enabled one.
 
-Selling internationally at $49 would mean enabling USD on the Paystack account,
-which is a separate approval.
+`PAYSTACK_CURRENCIES` is load-bearing rather than documentation: charging a
+currency the account has not enabled returns **403 `Currency not supported by
+merchant`**, which this codebase hit for real before the list existed.
+
+Today it is `NGN`, so:
+
+| Customer      | Audit reads | Charged   |
+| ------------- | ----------- | --------- |
+| Nigeria       | NGN         | ₦25,000   |
+| United States | USD         | ₦25,000 ⚠ |
+| Ghana         | GHS         | ₦25,000 ⚠ |
+
+The mismatched rows are narrow and logged, and the checkout response returns both
+`currency` and `auditCurrency` so the client can show both rather than implying
+one. It resolves by config, not code.
+
+#### Enabling USD
+
+A Nigeria-registered Paystack business can charge **NGN and USD**. USD requires:
+
+1. International payments enabled — requested at signup, granted on passing
+   compliance for the business type
+2. A **Zenith Bank USD domiciliary account** for payouts. There is no $1,000
+   minimum to open one, despite the common belief; in-branch or via Paystack's
+   partnership form
+3. USD switched on in the dashboard
+
+USD then settles **as USD** into that account rather than converting to naira.
+Fees are 3.9% on USD versus 3.9% + ₦100 on NGN.
+
+Then set `PAYSTACK_CURRENCIES=NGN,USD`, and US and European customers become
+aligned with no code change.
+
+GHS, KES and ZAR belong to businesses **registered** in Ghana, Kenya and South
+Africa, so they are unavailable to a Nigerian account. That is why a Ghanaian
+customer reads a cedi audit but pays in naira until there is a Ghanaian entity.
+
+#### Why ₦25,000
+
+Not a conversion of the $49 in `BUSINESS_MODEL.md` — at ₦1,400/$ that is ₦68,600.
+It is a deliberately lower local price, because ₦68,600 is a considered purchase
+for a Nigerian SMB rather than the impulse buy that document assumes. The audit
+costs about $0.20 to produce, so ₦25,000 is still roughly a 99% margin, and at
+this price point volume matters more than unit price.
 
 ### Testing payments without money
 
@@ -305,18 +342,15 @@ the address owning the Resend account. Once `brainycyber.com` is verified in
 Resend, switch it to an address on that domain — production refuses to boot with
 a `resend.dev` sender.
 
-### Currencies in email
+### Money in email
 
-Two currencies exist and confusing them would be expensive, so
-[`templates.ts`](src/modules/email/templates.ts) has one helper for each:
+Audit figures and the price are stored differently, so
+[`templates.ts`](src/modules/email/templates.ts) has one helper for each and a
+kobo value can never be rendered as though it were naira:
 
-- `money(audit, amount)` — audit figures, in the **customer's** currency, taken
-  from the audit itself.
-- `price()` — the report price, from config, in **minor units**.
-
-They agree for a Nigerian customer at an NGN price, which is the intended case.
-An international customer would read a USD audit and an NGN price, which is why
-`REPORT_CURRENCY` should track the primary market.
+- `money(audit, amount)` — audit figures: whole units, in the audit's currency.
+- `price(audit)` — the report price: minor units, in the currency we charge (see
+  [Currency](#currency) under Payments).
 
 ## Branching
 
