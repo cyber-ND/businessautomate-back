@@ -6,7 +6,9 @@ import { z } from 'zod';
 import { prisma } from '../../db.js';
 import { env } from '../../env.js';
 import { logger } from '../../logger.js';
+import { AuditSchema } from '../ai-engine/audit-schema.js';
 import { sendInBackground, sendReportUnlocked } from '../email/service.js';
+import { priceCurrencyFor, priceMinorFor, type CurrencyCode } from '../intake/currency.js';
 import { initializeTransaction } from './paystack.js';
 
 export class CheckoutStateError extends Error {
@@ -27,7 +29,14 @@ export interface CheckoutSession {
   authorizationUrl: string;
   reference: string;
   amountMinor: number;
+  /** Currency the customer will actually be charged in. */
   currency: string;
+  /**
+   * Currency the audit's figures are in. Usually identical to `currency`. When it
+   * differs, the client must show both rather than implying one — the customer is
+   * reading savings in one currency and paying in another.
+   */
+  auditCurrency: string;
 }
 
 /**
@@ -51,6 +60,29 @@ export async function createCheckout(reportId: string): Promise<CheckoutSession>
     throw new CheckoutStateError(`Report is ${report.status}; it is not ready to purchase yet.`);
   }
 
+  // Charge in the audit's own currency where Paystack allows it, so the reader
+  // compares price against savings without arithmetic. Falls back to a billable
+  // currency otherwise, rather than sending Paystack a currency it will reject
+  // with a 403 at the checkout button.
+  const audit = AuditSchema.safeParse(report.result);
+  if (!audit.success) {
+    throw new CheckoutStateError('This report has no readable audit to sell.');
+  }
+
+  const auditCurrency: CurrencyCode = audit.data.currency;
+  const currency = priceCurrencyFor(auditCurrency);
+  const amountMinor = priceMinorFor(currency);
+
+  if (currency !== auditCurrency) {
+    // Not an error, but worth seeing in logs: it means a visitor is being priced
+    // in a currency their audit is not written in, which is the signal to enable
+    // that currency on the Paystack account.
+    logger.info(
+      { reportId, auditCurrency, priceCurrency: currency },
+      'pricing in a different currency than the audit',
+    );
+  }
+
   // Reuse an unpaid attempt rather than minting a new reference on every click.
   // Otherwise a customer who bounces off the payment page twice leaves three
   // pending rows and three references that could each still complete.
@@ -60,12 +92,7 @@ export async function createCheckout(reportId: string): Promise<CheckoutSession>
   // we are about to ask Paystack to charge, and reconciling the webhook against
   // it would compare two different numbers.
   const existing = await prisma.payment.findFirst({
-    where: {
-      reportId,
-      status: 'PENDING',
-      amountMinor: env.REPORT_PRICE_MINOR,
-      currency: env.REPORT_CURRENCY,
-    },
+    where: { reportId, status: 'PENDING', amountMinor, currency },
     orderBy: { createdAt: 'desc' },
   });
 
@@ -73,20 +100,14 @@ export async function createCheckout(reportId: string): Promise<CheckoutSession>
 
   if (!existing) {
     await prisma.payment.create({
-      data: {
-        reportId,
-        reference,
-        amountMinor: env.REPORT_PRICE_MINOR,
-        currency: env.REPORT_CURRENCY,
-        status: 'PENDING',
-      },
+      data: { reportId, reference, amountMinor, currency, status: 'PENDING' },
     });
   }
 
   const session = await initializeTransaction({
     email: report.email,
-    amountMinor: env.REPORT_PRICE_MINOR,
-    currency: env.REPORT_CURRENCY,
+    amountMinor,
+    currency,
     reference,
     callbackUrl: `${env.WEB_APP_URL}/report/${reportId}`,
     metadata: { reportId },
@@ -95,8 +116,9 @@ export async function createCheckout(reportId: string): Promise<CheckoutSession>
   return {
     authorizationUrl: session.authorizationUrl,
     reference,
-    amountMinor: env.REPORT_PRICE_MINOR,
-    currency: env.REPORT_CURRENCY,
+    amountMinor,
+    currency,
+    auditCurrency,
   };
 }
 

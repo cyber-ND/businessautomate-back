@@ -65,10 +65,25 @@ const schema = z.object({
   // payments disabled would be worse than failing to start.
   PAYSTACK_SECRET_KEY: z.string().optional(),
 
-  // Minor units: kobo for NGN, cents for USD. Stored this way so money never
-  // touches a float. 4900 = $49.00.
-  REPORT_CURRENCY: z.enum(['NGN', 'USD']).default('USD'),
-  REPORT_PRICE_MINOR: z.coerce.number().int().positive().default(4900),
+  // Currencies actually enabled on the Paystack account, most preferred first.
+  //
+  // A Nigeria-registered business gets NGN by default and can add USD after
+  // passing compliance and attaching a Zenith Bank USD domiciliary account.
+  // GHS/KES/ZAR belong to businesses registered in those countries.
+  //
+  // This list is load-bearing, not documentation: an audit is only ever
+  // denominated in a currency listed here, so we can never produce a report we
+  // are unable to charge for. Initializing a transaction in a currency Paystack
+  // has not enabled returns 403 "Currency not supported by merchant".
+  PAYSTACK_CURRENCIES: z.string().default('NGN'),
+
+  // Prices in MINOR units — kobo for NGN, cents for USD — so money never
+  // touches a float. One per currency we can bill.
+  REPORT_PRICE_NGN_MINOR: z.coerce.number().int().positive().default(2_500_000),
+  REPORT_PRICE_USD_MINOR: z.coerce.number().int().positive().default(4_900),
+  REPORT_PRICE_GHS_MINOR: z.coerce.number().int().positive().default(60_000),
+  REPORT_PRICE_KES_MINOR: z.coerce.number().int().positive().default(650_000),
+  REPORT_PRICE_ZAR_MINOR: z.coerce.number().int().positive().default(90_000),
 
   // --- Email (Resend) ---
   RESEND_API_KEY: z.string().optional(),
@@ -111,6 +126,29 @@ const schema = z.object({
         message:
           "must use a verified domain in production — Resend's shared test sender only delivers to the account owner",
       });
+    }
+
+    const currencies = value.PAYSTACK_CURRENCIES.split(',')
+      .map((code) => code.trim().toUpperCase())
+      .filter(Boolean);
+
+    if (currencies.length === 0) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['PAYSTACK_CURRENCIES'],
+        message: 'at least one currency is required — with none, no report can be priced',
+      });
+    }
+
+    const known = ['NGN', 'USD', 'GHS', 'KES', 'ZAR'];
+    for (const code of currencies) {
+      if (!known.includes(code)) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['PAYSTACK_CURRENCIES'],
+          message: `${code} is not a currency Paystack supports (expected one of ${known.join(', ')})`,
+        });
+      }
     }
   });
 

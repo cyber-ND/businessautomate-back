@@ -1,6 +1,11 @@
 import { env } from '../../env.js';
 import type { Audit } from '../ai-engine/audit-schema.js';
-import { formatMinorUnits, formatMoney } from '../intake/currency.js';
+import {
+  formatMinorUnits,
+  formatMoney,
+  priceCurrencyFor,
+  priceMinorFor,
+} from '../intake/currency.js';
 
 // Emails are written the way the report is: their numbers, their words, no
 // marketing voice. The whole persuasive weight of a follow-up is that it quotes
@@ -62,19 +67,19 @@ function headline(text: string): string {
   return `<h1 style="margin:0 0 16px;font-size:22px;line-height:1.3;color:${COLORS.ink};">${text}</h1>`;
 }
 
-// Two currencies exist in one email and confusing them would be expensive.
-//
-// Audit figures are in the CUSTOMER's currency, produced by the model and
-// carried on the audit itself. The report price is in whatever Paystack is
-// configured to charge, held in minor units. These helpers keep the distinction
-// explicit rather than letting a bare number pick up whichever symbol is nearby.
+// Audit figures and the price are both in the audit's currency, but they are not
+// stored the same way: audit amounts are whole units produced by a model, while
+// prices are integers in minor units so money never touches a float. Two helpers
+// rather than one, so a kobo value can never be rendered as if it were naira.
 
 function money(audit: Audit, amount: number): string {
   return formatMoney(amount, audit.currency);
 }
 
-function price(): string {
-  return formatMinorUnits(env.REPORT_PRICE_MINOR, env.REPORT_CURRENCY);
+function price(audit: Audit): string {
+  // The charged currency, which is the audit's own wherever Paystack accepts it.
+  const currency = priceCurrencyFor(audit.currency);
+  return formatMinorUnits(priceMinorFor(currency), currency);
 }
 
 function describeFindings(audit: Audit): string {
@@ -178,7 +183,7 @@ export function followUpEmail(params: {
 }): EmailContent {
   const { reportId, businessName, audit, attempt } = params;
   const url = reportUrl(reportId);
-  const unlockPrice = price();
+  const unlockPrice = price(audit);
   const total = money(audit, audit.totals.monthlySavings);
 
   if (attempt >= 2) {
