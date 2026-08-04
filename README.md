@@ -142,6 +142,7 @@ but the doc's figure is roughly half the real one.
 | --------------------- | ---------------------------------------------- |
 | `npm run dev`         | Watch mode via tsx                             |
 | `npm run audit -- salon` | Generate one real audit from a fixture and print it |
+| `npm run paystack:currencies` | Ask Paystack which currencies it will actually accept |
 | `npm run build`       | `prisma generate` then `tsc`                   |
 | `npm start`           | Run the compiled server (production)           |
 | `npm run typecheck`   | Types only, no emit                            |
@@ -256,16 +257,34 @@ The mismatched rows are narrow and logged, and the checkout response returns bot
 `currency` and `auditCurrency` so the client can show both rather than implying
 one. It resolves by config, not code.
 
+#### Checking what is actually enabled
+
+Paystack has no endpoint that reports enabled currencies, so the only reliable
+answer is to attempt a transaction in each and read the rejection:
+
+```sh
+npm run paystack:currencies
+```
+
+It prints what Paystack accepts, compares that against `PAYSTACK_CURRENCIES`, and
+names the exact change to make. It also catches the dangerous inverse — `.env`
+claiming a currency Paystack rejects — which would otherwise surface as a failed
+checkout for a real customer. Test keys only, so it cannot leave stray records on
+a live account.
+
 #### Enabling USD
 
 A Nigeria-registered Paystack business can charge **NGN and USD**. USD requires:
 
-1. International payments enabled — requested at signup, granted on passing
-   compliance for the business type
-2. A **Zenith Bank USD domiciliary account** for payouts. There is no $1,000
-   minimum to open one, despite the common belief; in-branch or via Paystack's
-   partnership form
-3. USD switched on in the dashboard
+1. **International payments enabled** — requested when the business is created,
+   granted at activation on passing compliance for the business type. Check
+   Dashboard → *Preferences*.
+2. A **Zenith Bank USD domiciliary account** for payouts. Nigeria does not permit
+   USD settlement through other banks on Paystack. No $1,000 minimum to open one,
+   despite the common belief — in-branch or via Paystack's partnership form.
+3. Add it under Dashboard → *Settings → Accounts* → **Add USD account** (bank,
+   account number, branch code, account name). Paystack's review team confirms
+   within about 24 hours.
 
 USD then settles **as USD** into that account rather than converting to naira.
 Fees are 3.9% on USD versus 3.9% + ₦100 on NGN.
