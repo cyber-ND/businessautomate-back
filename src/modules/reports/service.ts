@@ -106,9 +106,14 @@ export interface ReportView {
    * the price, and doing that just to render a button would create a pending
    * transaction every time someone looked at the page.
    *
+   * `testMode` is derived from the Paystack key, never configured separately —
+   * two sources of truth would eventually disagree, and the failure mode is
+   * showing a real price beside a card form that cannot charge. The client uses
+   * it to say so plainly.
+   *
    * Null until there is an audit to price.
    */
-  price: { amountMinor: number; currency: string } | null;
+  price: { amountMinor: number; currency: string; testMode: boolean } | null;
 }
 
 function toView(report: Report): ReportView {
@@ -130,7 +135,11 @@ function toView(report: Report): ReportView {
     price: audit
       ? (() => {
           const currency = priceCurrencyFor(audit.currency);
-          return { amountMinor: priceMinorFor(currency), currency };
+          return {
+            amountMinor: priceMinorFor(currency),
+            currency,
+            testMode: !env.PAYSTACK_SECRET_KEY?.startsWith('sk_live_'),
+          };
         })()
       : null,
   };
