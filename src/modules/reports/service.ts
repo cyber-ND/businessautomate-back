@@ -8,6 +8,7 @@ import { AuditSchema, type Audit } from '../ai-engine/audit-schema.js';
 import { getAiProvider } from '../ai-engine/index.js';
 import { AuditGenerationError } from '../ai-engine/provider.js';
 import { sendInBackground, sendReportReady } from '../email/service.js';
+import { priceCurrencyFor, priceMinorFor } from '../intake/currency.js';
 import { FollowUpSchema, IntakeSchema, MAX_FOLLOW_UPS, type Intake } from '../intake/schema.js';
 import { gateAudit, type GatedAudit } from './gating.js';
 
@@ -99,6 +100,15 @@ export interface ReportView {
   /** Present only once COMPLETED. Shaped by payment state. */
   audit: GatedAudit | null;
   failureCode: string | null;
+  /**
+   * What unlocking costs, so the paywall can show a figure without starting a
+   * payment. Initializing a Paystack transaction is the only other way to learn
+   * the price, and doing that just to render a button would create a pending
+   * transaction every time someone looked at the page.
+   *
+   * Null until there is an audit to price.
+   */
+  price: { amountMinor: number; currency: string } | null;
 }
 
 function toView(report: Report): ReportView {
@@ -117,6 +127,12 @@ function toView(report: Report): ReportView {
     followUpsRemaining: Math.max(0, MAX_FOLLOW_UPS - conversation.followUps.length),
     audit: audit ? gateAudit(audit, paid) : null,
     failureCode: report.failureCode,
+    price: audit
+      ? (() => {
+          const currency = priceCurrencyFor(audit.currency);
+          return { amountMinor: priceMinorFor(currency), currency };
+        })()
+      : null,
   };
 }
 
