@@ -12,6 +12,7 @@
     "payment:simulate": "tsx src/scripts/simulate-payment.ts",
     "paystack:currencies": "tsx src/scripts/check-paystack-currencies.ts",
     "email:preview": "tsx src/scripts/preview-emails.ts",
+    "email:test": "tsx src/scripts/test-email.ts",
     "email:follow-ups": "tsx src/scripts/send-follow-ups.ts",
     "reap": "tsx src/scripts/reap.ts",
     "railway:env": "tsx src/scripts/railway-env.ts",
