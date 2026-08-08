@@ -1,0 +1,157 @@
+// BusinessAutomate data model.
+//
+// The load-bearing rule from BUSINESS_MODEL.md: one payment unlocks one REPORT,
+// never an account. Payment rows point at a reportId and `Report.paidAt` is the
+// only gate the API reads. Auditing a second business means a new Report and a
+// new payment, so reuse is structurally impossible and there is no abuse
+// detection to write.
+
+generator client {
+  provider = "prisma-client-js"
+  // "native" covers local Windows/macOS development. The Debian target is for
+  // Railway's build image: without it, Prisma generates an engine for the build
+  // machine and the deployed container fails at first query with
+  // "Query engine library for current platform could not be found".
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum ReportStatus {
+  PENDING // row created, generation not started
+  PROCESSING // Claude call in flight
+  AWAITING_ANSWERS // an adaptive follow-up question is waiting on the visitor
+  COMPLETED // result JSON is stored and servable
+  FAILED // generation failed after retries; the client offers a retry
+}
+
+enum ReportTier {
+  FREE
+  PAID
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCESS
+  FAILED
+  ABANDONED
+}
+
+// Accounts are deferred until after payment, so a User row may not exist while
+// a report is being generated. Email is the identity before that point and
+// lives on Report directly.
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String?
+  createdAt DateTime @default(now())
+
+  reports Report[]
+}
+
+model Report {
+  id     String       @id @default(cuid())
+  status ReportStatus @default(PENDING)
+  tier   ReportTier   @default(FREE)
+
+  // Identity before an account exists.
+  email        String
+  businessName String?
+
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id])
+
+  // Structured wizard answers plus the free-text pain points, as submitted.
+  intake Json
+
+  // Adaptive follow-up Q&A: [{ question, answer }]. Capped at 2-3 by the engine.
+  conversation Json?
+
+  // The COMPLETE audit, generated once. Free/paid gating is a response-shaping
+  // rule in the API layer, never a second generation.
+  result Json?
+
+  // Which model produced `result`. Kept for cost attribution and so audits
+  // generated before a model upgrade are identifiable afterwards.
+  model String?
+
+  // Payment unlocks this row. Null means the full report stays locked. Only a
+  // signature-verified Paystack webhook may set it.
+  paidAt DateTime?
+
+  // 30-day free re-run window for the same business: a re-run points back at
+  // the report whose payment it inherits.
+  parentReportId String?
+  parentReport   Report?  @relation("ReportLineage", fields: [parentReportId], references: [id])
+  reruns         Report[] @relation("ReportLineage")
+
+  // Set when generation starts, so a report orphaned by a crashed process can
+  // be found by age and retried. Without a queue, this is how we detect a job
+  // that died mid-flight.
+  startedAt   DateTime?
+  completedAt DateTime?
+  failureCode String?
+  attempts    Int       @default(0)
+
+  // Email state. Recorded per report rather than inferred, because "have we
+  // already told this person?" cannot be reconstructed from status alone, and
+  // sending the same email twice is worse than not sending it.
+  readyEmailSentAt    DateTime?
+  unlockedEmailSentAt DateTime?
+  followUpsSent       Int       @default(0)
+  lastFollowUpAt      DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  payments Payment[]
+
+  @@index([email])
+  @@index([status])
+  @@index([createdAt(sort: Desc)])
+  @@index([userId])
+  // The stale-job reaper scans for PROCESSING rows by age; this serves it
+  // directly instead of filtering a full status scan.
+  @@index([status, startedAt])
+  // The follow-up sweep looks for completed, unpaid, under-nudged reports.
+  @@index([status, paidAt, followUpsSent])
+}
+
+model Payment {
+  id       String @id @default(cuid())
+  reportId String
+  report   Report @relation(fields: [reportId], references: [id])
+
+  // Paystack's transaction reference. We generate it, Paystack echoes it back
+  // on the webhook, so it is both the lookup key and the idempotency key —
+  // a webhook redelivery must not unlock or charge twice.
+  reference String        @unique
+  status    PaymentStatus @default(PENDING)
+
+  // Minor units (kobo for NGN, cents for USD) to avoid floating-point drift on
+  // money. Currency is stored per payment because pricing may differ by region.
+  amountMinor Int
+  currency    String
+
+  // Raw verified webhook payload, kept for dispute resolution.
+  providerPayload Json?
+
+  createdAt DateTime  @default(now())
+  paidAt    DateTime?
+
+  @@index([reportId])
+}
+
+// Custom tier: the agency running audits for its own clients, plus any agency
+// we qualify into a custom plan. Our own agency is customer #1 internally.
+model AgencyAccount {
+  id            String   @id @default(cuid())
+  name          String
+  branding      Json?
+  reportCredits Int      @default(0)
+  seats         Int      @default(1)
+  createdAt     DateTime @default(now())
+}
