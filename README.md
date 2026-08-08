@@ -424,6 +424,52 @@ kobo value can never be rendered as though it were naira:
 - `price(audit)` — the report price: minor units, in the currency we charge (see
   [Currency](#currency) under Payments).
 
+## Deployment
+
+Railway builds from `main` via GitHub. `railway.json` pins the build, the start
+command and a healthcheck on `/health`.
+
+Three things about the setup that are easy to get wrong:
+
+**Migrations run in the start command, not the build.** The build image cannot
+reach the private database.
+
+**Prisma generates a Debian engine as well as a native one**
+(`binaryTargets` in the schema). Without it the build succeeds and the container
+then dies on its first query with *"Query engine library for current platform
+could not be found"*.
+
+**TypeScript and `@types/node` are `dependencies`, not `devDependencies`.**
+Railway sets `NODE_ENV=production` at build time, so `npm ci` skips
+devDependencies — and the build failed with `tsc: not found`. Anything the build
+itself needs has to be a real dependency. Verify this stays true with:
+
+```sh
+npm ci --omit=dev && npm run build    # then `npm ci` to restore
+```
+
+`tsx` can stay a devDependency because `tsconfig.json` compiles `src/scripts/`
+too, so scheduled jobs run the compiled output:
+
+```sh
+node dist/scripts/send-follow-ups.js    # e.g. a Railway cron
+node dist/scripts/reap.js
+```
+
+### Environment
+
+```sh
+npm run railway:env -- --real    # paste into Variables > Raw Editor
+```
+
+`DATABASE_URL` must be the service reference `${{Postgres.DATABASE_URL}}` so the
+service uses Railway's private network — a public URL would bill egress on every
+query.
+
+Two settings are legal but degraded, and warn loudly at boot rather than refusing
+to start: a `resend.dev` sender (email reaches only the Resend account owner) and
+a non-live Paystack key (no real payments). Being down would be worse than either.
+
 ## Branching
 
 `main` is the deployable branch. `dev` is integration. Every feature or milestone
