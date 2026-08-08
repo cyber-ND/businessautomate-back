@@ -114,6 +114,58 @@ export async function initializeTransaction(
   };
 }
 
+export interface VerifiedTransaction {
+  status: string;
+  amountMinor: number;
+  currency: string;
+  raw: unknown;
+}
+
+/**
+ * Ask Paystack the authoritative state of a transaction.
+ *
+ * The webhook is a push and can simply not arrive: it is blocked by a firewall,
+ * lost to a deploy restarting mid-delivery, or — during development — sent to a
+ * localhost address Paystack cannot reach at all. Verifying on the customer's
+ * return closes that gap, and is Paystack's own recommended pattern precisely
+ * because the webhook alone is not a guarantee.
+ */
+export async function verifyTransaction(reference: string): Promise<VerifiedTransaction> {
+  const response = await fetch(
+    `${PAYSTACK_API}/transaction/verify/${encodeURIComponent(reference)}`,
+    { headers: { Authorization: `Bearer ${secretKey()}` } },
+  );
+
+  const rawBody = await response.text();
+
+  interface VerifyResponse {
+    status?: boolean;
+    message?: string;
+    data?: { status?: string; amount?: number; currency?: string };
+  }
+
+  let payload: VerifyResponse | null = null;
+  try {
+    payload = JSON.parse(rawBody) as VerifyResponse;
+  } catch {
+    payload = null;
+  }
+
+  if (!response.ok || !payload?.status || !payload.data) {
+    throw new PaystackApiError(
+      payload?.message ?? `Paystack returned ${response.status}: ${rawBody.slice(0, 300)}`,
+      response.status,
+    );
+  }
+
+  return {
+    status: payload.data.status ?? 'unknown',
+    amountMinor: payload.data.amount ?? 0,
+    currency: payload.data.currency ?? '',
+    raw: payload,
+  };
+}
+
 /**
  * Verify a webhook came from Paystack.
  *
