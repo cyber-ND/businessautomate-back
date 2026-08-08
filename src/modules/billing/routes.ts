@@ -8,6 +8,7 @@ import {
   ReportNotFoundError,
   createCheckout,
   handleWebhookEvent,
+  verifyAndUnlock,
 } from './service.js';
 
 declare module 'fastify' {
@@ -67,6 +68,56 @@ export async function registerBillingRoutes(app: FastifyInstance): Promise<void>
               // Safe to expose: Paystack's messages describe configuration
               // problems ("currency not supported"), not anything sensitive, and
               // hiding them makes this class of failure very hard to diagnose.
+              detail: error.message,
+            },
+          });
+        }
+        throw error;
+      }
+    },
+  );
+
+  /**
+   * Confirm a payment on the customer's return from checkout.
+   *
+   * The webhook is a push and can fail to arrive — blocked, lost to a restart
+   * mid-delivery, or aimed at a localhost address Paystack cannot reach. Nobody
+   * who has paid should be left looking at a paywall because of it, so the
+   * client calls this the moment Paystack redirects them back.
+   *
+   * Unauthenticated on purpose: the reference is unguessable, and the decision
+   * to unlock comes from asking Paystack, not from the caller.
+   */
+  app.post(
+    '/payments/verify/:reference',
+    { config: { rateLimit: { max: 20, timeWindow: '10 minutes' } } },
+    async (request, reply) => {
+      if (!isPaystackConfigured()) {
+        return reply.code(503).send({ error: { code: 'PAYMENTS_UNAVAILABLE' } });
+      }
+
+      const params = z
+        .object({ reference: z.string().min(1).max(120) })
+        .safeParse(request.params);
+
+      if (!params.success) {
+        return reply
+          .code(400)
+          .send({ error: { code: 'INVALID_REFERENCE', message: 'Malformed reference.' } });
+      }
+
+      try {
+        return await verifyAndUnlock(params.data.reference);
+      } catch (error) {
+        if (error instanceof PaystackApiError) {
+          logger.error(
+            { err: error, upstreamStatus: error.upstreamStatus },
+            'could not verify the transaction with Paystack',
+          );
+          return reply.code(502).send({
+            error: {
+              code: 'PAYMENT_PROVIDER_ERROR',
+              message: 'Could not confirm the payment. Please refresh in a moment.',
               detail: error.message,
             },
           });

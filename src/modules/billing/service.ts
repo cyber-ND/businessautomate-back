@@ -9,7 +9,7 @@ import { logger } from '../../logger.js';
 import { AuditSchema } from '../ai-engine/audit-schema.js';
 import { sendInBackground, sendReportUnlocked } from '../email/service.js';
 import { priceCurrencyFor, priceMinorFor, type CurrencyCode } from '../intake/currency.js';
-import { initializeTransaction } from './paystack.js';
+import { initializeTransaction, verifyTransaction } from './paystack.js';
 
 export class CheckoutStateError extends Error {
   constructor(message: string) {
@@ -83,26 +83,22 @@ export async function createCheckout(reportId: string): Promise<CheckoutSession>
     );
   }
 
-  // Reuse an unpaid attempt rather than minting a new reference on every click.
-  // Otherwise a customer who bounces off the payment page twice leaves three
-  // pending rows and three references that could each still complete.
+  // A fresh reference every time, deliberately.
   //
-  // Reuse only when the price still matches. If pricing or currency changed
-  // since the row was written, the stored amount would no longer describe what
-  // we are about to ask Paystack to charge, and reconciling the webhook against
-  // it would compare two different numbers.
-  const existing = await prisma.payment.findFirst({
-    where: { reportId, status: 'PENDING', amountMinor, currency },
-    orderBy: { createdAt: 'desc' },
+  // An earlier version reused the most recent PENDING row to avoid leaving
+  // several behind. That broke the moment a payment succeeded at Paystack while
+  // our row stayed PENDING — which is exactly what happens when a webhook does
+  // not arrive. The next click re-sent a reference Paystack had already
+  // processed, and Paystack rejects duplicates, so the customer who had already
+  // paid could not even reach the payment page again.
+  //
+  // Spare PENDING rows are harmless: each is independently verifiable, and only
+  // the one Paystack confirms is ever marked SUCCESS.
+  const reference = `ba_${reportId}_${randomUUID().slice(0, 8)}`;
+
+  await prisma.payment.create({
+    data: { reportId, reference, amountMinor, currency, status: 'PENDING' },
   });
-
-  const reference = existing?.reference ?? `ba_${reportId}_${randomUUID().slice(0, 8)}`;
-
-  if (!existing) {
-    await prisma.payment.create({
-      data: { reportId, reference, amountMinor, currency, status: 'PENDING' },
-    });
-  }
 
   const session = await initializeTransaction({
     email: report.email,
@@ -120,6 +116,49 @@ export async function createCheckout(reportId: string): Promise<CheckoutSession>
     currency,
     auditCurrency,
   };
+}
+
+/**
+ * Confirm a payment with Paystack directly and unlock if it went through.
+ *
+ * Called when the customer returns from checkout. The webhook is a push and can
+ * simply fail to arrive — blocked, lost to a restart mid-delivery, or aimed at a
+ * localhost address Paystack cannot reach — and a customer who has paid must not
+ * be left looking at a paywall because of it.
+ *
+ * Safe to call repeatedly: it reuses the same idempotent unlock as the webhook,
+ * so whichever arrives second is a no-op.
+ */
+export async function verifyAndUnlock(reference: string): Promise<WebhookOutcome> {
+  const payment = await prisma.payment.findUnique({ where: { reference } });
+  if (!payment) {
+    logger.warn({ reference }, 'verify requested for an unknown reference');
+    return { handled: false, reason: 'unknown reference' };
+  }
+
+  if (payment.status === 'SUCCESS') {
+    return { handled: true, reportId: payment.reportId, alreadyProcessed: true };
+  }
+
+  const verified = await verifyTransaction(reference);
+
+  if (verified.status !== 'success') {
+    logger.info({ reference, status: verified.status }, 'verified transaction has not succeeded');
+    return { handled: false, reason: `transaction is ${verified.status}` };
+  }
+
+  // Never unlock for less than the asking price. Paystack reports what was
+  // actually captured, and trusting our own expectation instead would make the
+  // amount decorative.
+  if (verified.amountMinor < payment.amountMinor) {
+    logger.error(
+      { reference, expected: payment.amountMinor, received: verified.amountMinor },
+      'verified amount is below the price; refusing to unlock',
+    );
+    return { handled: false, reason: 'amount mismatch' };
+  }
+
+  return applySuccessfulPayment(payment.reference, verified.raw);
 }
 
 const WebhookEventSchema = z.object({
@@ -173,6 +212,30 @@ export async function handleWebhookEvent(payload: unknown): Promise<WebhookOutco
     return { handled: false, reason: 'unknown reference' };
   }
 
+  return applySuccessfulPayment(payment.reference, payload);
+}
+
+/**
+ * Mark a payment successful and unlock its report.
+ *
+ * Shared by the webhook and by verify-on-return so the two can never drift: both
+ * routes to "this payment went through" must produce exactly the same writes, or
+ * a report unlocked by one would differ from one unlocked by the other.
+ *
+ * Idempotent. Paystack retries webhooks, and the customer's return can race the
+ * delivery, so whichever arrives second must be a no-op.
+ */
+async function applySuccessfulPayment(
+  reference: string,
+  providerPayload: unknown,
+): Promise<WebhookOutcome> {
+  const payment = await prisma.payment.findUnique({
+    where: { reference },
+    include: { report: true },
+  });
+
+  if (!payment) return { handled: false, reason: 'unknown reference' };
+
   if (payment.status === 'SUCCESS') {
     return { handled: true, reportId: payment.reportId, alreadyProcessed: true };
   }
@@ -185,25 +248,25 @@ export async function handleWebhookEvent(payload: unknown): Promise<WebhookOutco
       data: {
         status: 'SUCCESS',
         paidAt: new Date(),
-        providerPayload: payload as Prisma.InputJsonValue,
+        providerPayload: providerPayload as Prisma.InputJsonValue,
       },
     }),
     prisma.report.update({
       where: { id: payment.reportId },
-      // Only set paidAt if it is not already set, so a replayed webhook cannot
-      // move the timestamp that the 30-day re-run window is measured from.
+      // Only set paidAt if it is not already set, so a replay cannot move the
+      // timestamp the 30-day re-run window is measured from.
       data: { paidAt: payment.report.paidAt ?? new Date() },
     }),
   ]);
 
   logger.info(
-    { reportId: payment.reportId, reference: data.reference, amountMinor: payment.amountMinor },
+    { reportId: payment.reportId, reference, amountMinor: payment.amountMinor },
     'report unlocked by payment',
   );
 
-  // Not awaited: Paystack is waiting on this response and will retry the whole
-  // webhook if it is slow or errors. The unlock is already committed, so a
-  // failed email must not cause a redelivery of an event we have handled.
+  // Not awaited: Paystack is waiting on the webhook response and will retry the
+  // whole delivery if it is slow or errors. The unlock is already committed, so
+  // a failed email must not cause a redelivery of an event we have handled.
   sendInBackground(() => sendReportUnlocked(payment.reportId), {
     reportId: payment.reportId,
     email: 'unlocked',
