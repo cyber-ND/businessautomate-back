@@ -409,10 +409,26 @@ npm run email:follow-ups                # actually send
 than needed. Selection is conservative: completed, unpaid, under
 `FOLLOW_UP_MAX`, and quiet for at least `FOLLOW_UP_DELAY_HOURS`.
 
-`EMAIL_FROM` currently uses Resend's shared test sender, which only delivers to
-the address owning the Resend account. Once `brainycyber.com` is verified in
-Resend, switch it to an address on that domain — production refuses to boot with
-a `resend.dev` sender.
+### The sending domain
+
+The verified domain is **`send.brainycyber.com`**, a subdomain — not the root.
+`audit@brainycyber.com` would be rejected as unverified. A subdomain is the
+better arrangement regardless: a bounce rate or spam complaint on transactional
+mail cannot damage the reputation of the root domain.
+
+DNS is on Cloudflare. If verification ever breaks, check the records are set to
+**DNS only** (grey cloud). Cloudflare's proxy mangles mail records, and that is
+the usual cause.
+
+Prove delivery rather than trusting the dashboard — a domain can read as verified
+and still not deliver:
+
+```sh
+npm run email:test -- someone@example.com
+```
+
+Use an address that does **not** own the Resend account. Sending to your own
+address succeeds even on the shared `resend.dev` sender, so it proves nothing.
 
 ### Money in email
 
