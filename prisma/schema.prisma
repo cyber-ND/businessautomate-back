@@ -8,6 +8,11 @@
 
 generator client {
   provider = "prisma-client-js"
+  // "native" covers local Windows/macOS development. The Debian target is for
+  // Railway's build image: without it, Prisma generates an engine for the build
+  // machine and the deployed container fails at first query with
+  // "Query engine library for current platform could not be found".
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
 }
 
 datasource db {

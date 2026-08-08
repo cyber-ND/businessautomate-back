@@ -14,6 +14,7 @@
     "email:preview": "tsx src/scripts/preview-emails.ts",
     "email:follow-ups": "tsx src/scripts/send-follow-ups.ts",
     "reap": "tsx src/scripts/reap.ts",
+    "railway:env": "tsx src/scripts/railway-env.ts",
     "build": "prisma generate && tsc -p tsconfig.json",
     "start": "node dist/server.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",

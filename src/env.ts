@@ -140,14 +140,10 @@ const schema = z.object({
       });
     }
 
-    if (value.NODE_ENV === 'production' && value.EMAIL_FROM.includes('resend.dev')) {
-      ctx.addIssue({
-        code: 'custom',
-        path: ['EMAIL_FROM'],
-        message:
-          "must use a verified domain in production — Resend's shared test sender only delivers to the account owner",
-      });
-    }
+    // Deliberately NOT a hard failure. Resend's shared sender only delivers to
+    // the account owner, so email is effectively broken — but a site that is up
+    // with broken email beats a site that will not boot while a DNS record
+    // propagates. Warned loudly at startup instead; see below.
 
     const currencies = value.PAYSTACK_CURRENCIES.split(',')
       .map((code) => code.trim().toUpperCase())
